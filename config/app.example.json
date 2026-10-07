@@ -1,0 +1,18 @@
+{
+  "publicConfig": {
+    "endpoint": "https://<开通云服务后返回的 endpoint>",
+    "oauthRelayBaseUrl": "https://www.workbuddy.cn/v2/as/genie-baas/oauth",
+    "publishableKey": "wbpk_<开通云服务后返回的 publishableKey>"
+  },
+  "crawler": {
+    "sourceUrl": "https://api-one-wscn.awtmt.com/apiv1/search/live",
+    "channel": "global-channel",
+    "limit": 20,
+    "score": 2,
+    "defaultIntervalMinutes": 20,
+    "defaultBackfillPages": 5,
+    "requestTimeoutMs": 15000,
+    "checkEverySeconds": 60,
+    "retryAfterErrorMinutes": 2
+  }
+}

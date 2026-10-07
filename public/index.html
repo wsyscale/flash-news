@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>快讯分析台 · 7×24 重要快讯 + AI 深度解读</title>
+  <meta name="description" content="自动收录华尔街见闻 7×24 重要快讯，一键调用大模型深度分析" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23165dff'/%3E%3Cpath d='M36 8 18 36h12l-4 20 20-30H34z' fill='white'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <!-- 启动中 -->
+  <div id="bootView" class="boot">
+    <div class="boot-logo"><span class="logo-mark">快</span></div>
+    <div class="boot-text">正在加载…</div>
+  </div>
+
+  <!-- 登录 / 注册 -->
+  <section id="authView" class="auth" hidden>
+    <div class="auth-brand">
+      <div class="brand-row"><span class="logo-mark">快</span><span class="brand-name">快讯分析台</span></div>
+      <h1>7×24 重要快讯<br />一键 AI 深度解读</h1>
+      <ul class="feature-list">
+        <li><b>自动收录</b>每 20 分钟抓取华尔街见闻重要快讯，自动去重入库</li>
+        <li><b>深度分析</b>点击「分析」，用你自己的 DeepSeek / 腾讯云 TokenHub Key 解读影响，TokenHub 模型可联网搜索最新信息</li>
+        <li><b>继续追问</b>分析完成后可就这条快讯与 AI 多轮对话，追问板块、标的与风险</li>
+        <li><b>私有留存</b>分析与对话私有保存；快讯保留近 14 天，过期自动清理</li>
+      </ul>
+      <p class="auth-foot">快讯来源：华尔街见闻 · AI 内容仅供参考，不构成投资建议</p>
+    </div>
+
+    <div class="auth-panel">
+      <div class="auth-card">
+        <h2 class="auth-title">登录 / 注册</h2>
+        <p class="auth-sub">未注册的手机号或邮箱，验证后将自动创建账号</p>
+
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab is-active" data-auth-tab="phone">手机号</button>
+          <button type="button" class="tab" data-auth-tab="email">邮箱</button>
+        </div>
+
+        <!-- 手机号验证码 -->
+        <form id="phoneForm" class="auth-form" data-auth-pane="phone" novalidate>
+          <label class="field">
+            <span class="field-label">手机号</span>
+            <div class="input-wrap prefix">
+              <span class="input-prefix">+86</span>
+              <input id="phoneInput" type="tel" inputmode="numeric" maxlength="11" autocomplete="tel" placeholder="请输入 11 位手机号" />
+            </div>
+            <span class="field-error" id="phoneError"></span>
+          </label>
+          <label class="field">
+            <span class="field-label">验证码</span>
+            <div class="input-row">
+              <input id="phoneCode" type="text" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="短信验证码" />
+              <button type="button" class="btn btn-ghost btn-code" id="phoneSendBtn">获取验证码</button>
+            </div>
+          </label>
+          <button type="submit" class="btn btn-primary btn-block" id="phoneSubmitBtn">登录 / 注册</button>
+        </form>
+
+        <!-- 邮箱 -->
+        <div class="auth-form" data-auth-pane="email" hidden>
+          <div class="seg" role="tablist">
+            <button type="button" class="seg-item is-active" data-email-mode="password">密码登录</button>
+            <button type="button" class="seg-item" data-email-mode="otp">验证码登录 / 注册</button>
+          </div>
+
+          <form id="emailPwdForm" data-email-pane="password" novalidate>
+            <label class="field">
+              <span class="field-label">邮箱</span>
+              <input id="emailPwdEmail" type="email" autocomplete="email" placeholder="name@example.com" />
+            </label>
+            <label class="field">
+              <span class="field-label">密码</span>
+              <input id="emailPwdPassword" type="password" autocomplete="current-password" placeholder="请输入密码" />
+            </label>
+            <div class="form-links"><a href="#" id="toForgot">忘记密码？</a></div>
+            <button type="submit" class="btn btn-primary btn-block" id="emailPwdSubmit">登录</button>
+          </form>
+
+          <form id="emailOtpForm" data-email-pane="otp" hidden novalidate>
+            <label class="field">
+              <span class="field-label">邮箱</span>
+              <input id="emailOtpEmail" type="email" autocomplete="email" placeholder="name@example.com" />
+            </label>
+            <label class="field">
+              <span class="field-label">验证码</span>
+              <div class="input-row">
+                <input id="emailOtpCode" type="text" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="邮箱验证码" />
+                <button type="button" class="btn btn-ghost btn-code" id="emailOtpSend">获取验证码</button>
+              </div>
+            </label>
+            <label class="field">
+              <span class="field-label">设置密码 <em class="muted">（新用户必填，至少 8 位；已注册可留空）</em></span>
+              <input id="emailOtpPassword" type="password" autocomplete="new-password" placeholder="用于下次密码登录" />
+            </label>
+            <button type="submit" class="btn btn-primary btn-block" id="emailOtpSubmit">登录 / 注册</button>
+          </form>
+
+          <form id="forgotForm" data-email-pane="forgot" hidden novalidate>
+            <p class="pane-tip">输入注册邮箱获取验证码，然后设置新密码。</p>
+            <label class="field">
+              <span class="field-label">邮箱</span>
+              <input id="forgotEmail" type="email" autocomplete="email" placeholder="name@example.com" />
+            </label>
+            <label class="field">
+              <span class="field-label">验证码</span>
+              <div class="input-row">
+                <input id="forgotCode" type="text" inputmode="numeric" maxlength="8" placeholder="邮箱验证码" />
+                <button type="button" class="btn btn-ghost btn-code" id="forgotSend">获取验证码</button>
+              </div>
+            </label>
+            <label class="field">
+              <span class="field-label">新密码</span>
+              <input id="forgotPassword" type="password" autocomplete="new-password" placeholder="至少 8 位" />
+            </label>
+            <button type="submit" class="btn btn-primary btn-block" id="forgotSubmit">重置密码并登录</button>
+            <div class="form-links center"><a href="#" id="backToLogin">返回密码登录</a></div>
+          </form>
+        </div>
+
+        <div class="auth-msg" id="authMsg" role="alert"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 主界面 -->
+  <section id="appView" class="app" hidden>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand-row" href="/"><span class="logo-mark sm">快</span><span class="brand-name">快讯分析台</span></a>
+        <div class="crawl-pill" id="crawlPill" title="自动抓取状态">
+          <span class="dot"></span><span id="crawlPillText">抓取状态加载中…</span>
+        </div>
+        <div class="topbar-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="openSettings">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7.4 7.4 0 0 0 1.7-1l2.4 1 2-3.4zM13 15.5A3.5 3.5 0 1 1 13 8.5a3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>
+            <span>设置</span>
+          </button>
+          <div class="user-menu">
+            <button type="button" class="avatar" id="avatarBtn" aria-haspopup="true"></button>
+            <div class="menu" id="userMenu" hidden>
+              <div class="menu-head" id="menuIdentity"></div>
+              <button type="button" class="menu-item" data-open-settings="account">账号与安全</button>
+              <button type="button" class="menu-item danger" id="logoutBtn">退出登录</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="feed">
+        <div class="feed-head">
+          <div class="search">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M10 3a7 7 0 0 1 5.6 11.2l4.6 4.6-1.4 1.4-4.6-4.6A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg>
+            <input id="searchInput" type="search" placeholder="搜索快讯关键词，如：美联储、黄金、英伟达" />
+          </div>
+          <div class="chips" id="filterChips">
+            <button type="button" class="chip is-active" data-filter="all">全部</button>
+            <button type="button" class="chip" data-filter="important">重要</button>
+            <button type="button" class="chip" data-filter="related">与我相关</button>
+            <button type="button" class="chip" data-filter="analyzed">我分析过</button>
+          </div>
+        </div>
+        <div class="feed-sub">
+          <span id="feedCount">—</span>
+          <button type="button" class="link-btn" id="refreshFeed">刷新</button>
+        </div>
+        <button type="button" class="new-banner" id="newBanner" hidden></button>
+        <div id="feedList" class="timeline" aria-live="polite"></div>
+        <div class="feed-foot">
+          <button type="button" class="btn btn-ghost" id="loadMore" hidden>加载更多</button>
+          <span class="muted" id="feedEnd" hidden>没有更多了</span>
+        </div>
+      </section>
+
+      <aside class="side">
+        <div class="card stat-card">
+          <div class="card-title">今日概览</div>
+          <div class="stats">
+            <div class="stat"><div class="stat-num" id="statToday">—</div><div class="stat-label">今日快讯</div></div>
+            <div class="stat"><div class="stat-num" id="statImportant">—</div><div class="stat-label">今日重要</div></div>
+            <div class="stat"><div class="stat-num" id="statMine">—</div><div class="stat-label">我的分析</div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">自动抓取</div>
+          <dl class="kv" id="crawlKv">
+            <dt>抓取间隔</dt><dd id="kvInterval">—</dd>
+            <dt>上次抓取</dt><dd id="kvLast">—</dd>
+            <dt>本次新增</dt><dd id="kvInserted">—</dd>
+            <dt>下次抓取</dt><dd id="kvNext">—</dd>
+          </dl>
+          <p class="card-note" id="retentionNote">来源：华尔街见闻 7×24（重要级别），按快讯 ID 与内容双重去重；仅保留近 14 天，过期自动清理。</p>
+        </div>
+        <div class="card" id="llmHintCard">
+          <div class="card-title">AI 分析</div>
+          <p class="card-note" id="llmHintText">尚未配置模型。点击快讯右侧「分析」前，请先在设置里填写 DeepSeek 或腾讯云 TokenHub 的 API Key。</p>
+          <button type="button" class="btn btn-primary btn-sm" data-open-settings="llm">配置模型</button>
+        </div>
+      </aside>
+    </main>
+  </section>
+
+  <!-- 分析抽屉 -->
+  <div class="drawer-mask" id="drawerMask" hidden></div>
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <header class="drawer-head">
+      <div class="drawer-title">AI 深度分析</div>
+      <button type="button" class="icon-btn" id="drawerClose" aria-label="关闭">✕</button>
+    </header>
+    <div class="drawer-body" id="drawerBody">
+      <div class="drawer-news" id="drawerNews"></div>
+      <div class="analysis-meta" id="analysisMeta"></div>
+      <details class="reasoning" id="reasoningBox" hidden>
+        <summary>思考过程 <span id="reasoningLen"></span></summary>
+        <div class="reasoning-body" id="reasoningBody"></div>
+      </details>
+      <div class="analysis-state" id="analysisState"></div>
+      <article class="md" id="analysisBody"></article>
+      <div id="analysisSources"></div>
+
+      <!-- 追问对话 -->
+      <section class="chat" id="chatSection" hidden>
+        <div class="chat-head">
+          <span class="chat-title">继续追问</span>
+          <button type="button" class="link-btn" id="chatClear" hidden>清空对话</button>
+        </div>
+        <p class="chat-sub" id="chatSub"></p>
+        <div class="chat-list" id="chatList"></div>
+        <div class="chat-suggest" id="chatSuggest" hidden></div>
+        <div class="chat-error" id="chatError" role="alert" hidden></div>
+      </section>
+    </div>
+    <div class="chat-composer" id="chatComposer" hidden>
+      <textarea id="chatInput" rows="1" maxlength="4000" placeholder="就这条快讯继续追问，Enter 发送"></textarea>
+      <button type="button" class="btn btn-primary btn-sm" id="chatSend" disabled>发送</button>
+    </div>
+    <footer class="drawer-foot">
+      <button type="button" class="btn btn-ghost btn-sm" id="stopBtn" hidden>停止生成</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="copyBtn" hidden>复制结果</button>
+      <button type="button" class="btn btn-primary btn-sm" id="reanalyzeBtn" hidden>重新分析</button>
+    </footer>
+  </aside>
+
+  <!-- 设置 -->
+  <div class="modal-mask" id="settingsMask" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <header class="modal-head">
+        <div class="modal-title" id="settingsTitle">设置</div>
+        <button type="button" class="icon-btn" id="settingsClose" aria-label="关闭">✕</button>
+      </header>
+      <div class="tabs modal-tabs">
+        <button type="button" class="tab is-active" data-set-tab="llm">模型配置</button>
+        <button type="button" class="tab" data-set-tab="crawl">抓取设置</button>
+        <button type="button" class="tab" data-set-tab="account">账号</button>
+      </div>
+      <div class="modal-body">
+        <!-- 模型配置 -->
+        <div data-set-pane="llm">
+          <div class="field">
+            <span class="field-label">模型服务商</span>
+            <div class="seg provider-seg" id="providerSeg"></div>
+          </div>
+          <label class="field">
+            <span class="field-label">API Key <a class="field-link" id="keyLink" target="_blank" rel="noopener">获取 Key ↗</a></span>
+            <div class="input-row">
+              <input id="llmKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…" />
+              <button type="button" class="btn btn-ghost" id="toggleKey">显示</button>
+            </div>
+            <span class="field-hint" id="keyHint"></span>
+          </label>
+          <label class="field" id="baseUrlField">
+            <span class="field-label">接入地址（Base URL）</span>
+            <select id="llmBaseSelect"></select>
+            <input id="llmBaseInput" type="url" placeholder="https://your-endpoint.com/v1" hidden />
+          </label>
+          <label class="field">
+            <span class="field-label">模型</span>
+            <input id="llmModel" list="modelList" spellcheck="false" placeholder="选择或输入模型名" />
+            <datalist id="modelList"></datalist>
+            <span class="field-hint" id="modelHint"></span>
+          </label>
+          <label class="switch-row" id="thinkingRow">
+            <input type="checkbox" id="llmThinking" />
+            <span class="switch"></span>
+            <span>深度思考（显示推理过程，更慢但更深入）</span>
+          </label>
+          <label class="switch-row" id="searchRow">
+            <input type="checkbox" id="llmSearch" />
+            <span class="switch"></span>
+            <span>联网搜索（分析与追问时由模型按需搜索最新信息，回答附引用来源）</span>
+          </label>
+          <span class="field-hint search-hint" id="searchHint"></span>
+          <div class="field watch-field">
+            <span class="field-label">关注的板块 / 标的 <em class="muted" id="watchCount">（0/20）</em></span>
+            <div class="watch-box" id="watchBox">
+              <div class="watch-chips" id="watchChips"></div>
+              <input id="watchInput" type="text" autocomplete="off" spellcheck="false" placeholder="输入名称或代码搜索，如 贵州茅台、510300、新能源车" />
+            </div>
+            <div class="watch-suggest" id="watchSuggest" role="listbox" hidden></div>
+            <div class="watch-quick"><span class="muted">快速添加：</span><span id="watchQuick"></span></div>
+            <span class="field-hint">设置后，每次分析会额外评估快讯对它们的短期（1 个月内）与中长期（3–12 个月）影响；快讯提到它们时会标「关注」，可用「与我相关」筛选。回车可直接添加输入的文字。</span>
+          </div>
+          <details class="field prompt-box">
+            <summary>自定义分析提示词（可选）</summary>
+            <textarea id="llmPrompt" rows="8" placeholder="留空则使用内置的专业分析模板"></textarea>
+            <button type="button" class="link-btn" id="fillDefaultPrompt">填入默认模板</button>
+          </details>
+          <p class="field-hint">Key 保存在你的云端账号中，仅你本人可读取；分析时经本站服务端转发至模型服务商，不做记录。</p>
+          <div class="modal-actions">
+            <span class="inline-msg" id="llmMsg"></span>
+            <button type="button" class="btn btn-ghost" id="testLlm">测试连接</button>
+            <button type="button" class="btn btn-primary" id="saveLlm">保存</button>
+          </div>
+        </div>
+
+        <!-- 抓取设置 -->
+        <div data-set-pane="crawl" hidden>
+          <dl class="kv kv-wide" id="crawlDetail"></dl>
+          <div id="adminBox"></div>
+          <div class="card-title mt">最近抓取记录</div>
+          <div class="table-wrap">
+            <table class="runs">
+              <thead><tr><th>时间</th><th>触发</th><th>结果</th><th>抓取</th><th>新增</th><th>耗时</th></tr></thead>
+              <tbody id="runsBody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 账号 -->
+        <div data-set-pane="account" hidden>
+          <dl class="kv kv-wide" id="accountKv"></dl>
+          <form id="changePwdForm" class="sub-form" novalidate>
+            <div class="card-title">修改密码 <em class="muted">（邮箱密码登录用户）</em></div>
+            <label class="field"><span class="field-label">原密码</span><input id="oldPwd" type="password" autocomplete="current-password" /></label>
+            <label class="field"><span class="field-label">新密码</span><input id="newPwd" type="password" autocomplete="new-password" placeholder="至少 8 位" /></label>
+            <div class="modal-actions">
+              <span class="inline-msg" id="pwdMsg"></span>
+              <button type="submit" class="btn btn-ghost">更新密码</button>
+            </div>
+          </form>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-danger" id="logoutBtn2">退出登录</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-wrap" id="toastWrap"></div>
+
+  <!-- 云服务 SDK：固定版本（与 package.json 一致）；CDN 不可用时回退到本站 node_modules 里的同版本副本 -->
+  <script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@0.1.3-dev.c090db7.202610050023/lib/index.global.js"></script>
+  <script>window.WorkBuddyCloud || document.write('<script src="/vendor/workbuddy-cloud-sdk.global.js"><\/script>')</script>
+  <script src="/vendor/marked.umd.js"></script>
+  <script src="/vendor/purify.min.js"></script>
+  <script src="/app-config.js"></script>
+  <script type="module" src="/js/main.js"></script>
+  <script>
+    setTimeout(function () {
+      var boot = document.getElementById('bootView')
+      if (boot && !boot.hidden) boot.querySelector('.boot-text').textContent = '加载时间较长，请检查网络后刷新页面'
+    }, 12000)
+  </script>
+</body>
+</html>

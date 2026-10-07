@@ -1,0 +1,13 @@
+node_modules/
+.DS_Store
+data/
+package-lock.json
+
+# WorkBuddy 为当前账号生成的应用登记（每个账号开通云服务时自动生成，不要提交）
+.workbuddy/
+.wbapp_*.genie
+
+# 注意：config/app.json 和 config/secret.json 不能写在这里。
+# 发布时这两个文件必须随项目一起上传（服务端靠它们连接云服务、校验签名）。
+# 它们由 `node scripts/setup.mjs app-config / secrets` 生成，脚本会自动写进 .git/info/exclude，
+# 只在你本机排除、不会被提交；提交前可以用 `node scripts/setup.mjs check` 再确认一次。

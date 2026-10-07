@@ -1,0 +1,24 @@
+{
+  "name": "flash-news",
+  "version": "1.0.0",
+  "private": true,
+  "description": "快讯分析台：定时抓取华尔街见闻 7x24 重要快讯入库，登录后用自己的 API Key 调用大模型深度分析、追问、联网搜索；基于 WorkBuddy 云服务，可一键部署",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "crawl:once": "node server.js --crawl-once",
+    "setup": "node scripts/setup.mjs"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "@tencent-ai/workbuddy-cloud-sdk": "0.1.3-dev.c090db7.202610050023"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wsyscale/flash-news.git"
+  }
+}
