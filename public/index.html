@@ -277,12 +277,12 @@
             <select id="llmBaseSelect"></select>
             <input id="llmBaseInput" type="url" placeholder="https://your-endpoint.com/v1" hidden />
           </label>
-          <label class="field">
-            <span class="field-label">模型</span>
-            <input id="llmModel" list="modelList" spellcheck="false" placeholder="选择或输入模型名" />
-            <datalist id="modelList"></datalist>
+          <div class="field">
+            <label class="field-label" for="llmModelSelect">模型 <em class="muted" id="modelCount"></em></label>
+            <select id="llmModelSelect"></select>
+            <input id="llmModel" class="model-input" type="text" autocomplete="off" spellcheck="false" maxlength="120" placeholder="填写模型名称（model 参数值），如 deepseek-v4-flash" hidden />
             <span class="field-hint" id="modelHint"></span>
-          </label>
+          </div>
           <label class="switch-row" id="thinkingRow">
             <input type="checkbox" id="llmThinking" />
             <span class="switch"></span>

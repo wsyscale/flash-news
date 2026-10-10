@@ -1,6 +1,6 @@
 // 设置弹窗：模型配置（云端私有保存）/ 抓取设置（管理员可改间隔）/ 账号
 import { cloud, apiJson, clearTicket } from './cloud.js'
-import { state, providerById, searchSupport } from './state.js'
+import { state, providerById, searchSupport, findModel } from './state.js'
 import { $, $$, escapeHtml, fmtDateTime, relTime, toast, withBusy, cloudErrorText, maskEmail, maskPhone, debounce } from './utils.js'
 import { MAX_WATCH, QUICK_SECTORS, WATCH_TYPE_LABEL, watchKey, keywordsOf } from './watch.js'
 
@@ -177,7 +177,7 @@ function collectFields() {
   const p = providerById(draft.provider)
   const cfg = draft.configs[draft.provider] || (draft.configs[draft.provider] = {})
   cfg.apiKey = $('#llmKey').value.trim()
-  cfg.model = $('#llmModel').value.trim()
+  cfg.model = currentModel()
   if (p && p.id === 'custom') cfg.baseUrl = $('#llmBaseInput').value.trim()
   else cfg.baseUrl = $('#llmBaseSelect').value
   if (!$('#llmThinking').disabled) draft.thinking = $('#llmThinking').checked
@@ -185,11 +185,111 @@ function collectFields() {
   draft.system_prompt = $('#llmPrompt').value.trim()
 }
 
+// ---------------- 模型选择：分组下拉框 + 手动填写 ----------------
+const MANUAL = '__manual__'
+const REGION_TEXT = { cn: '仅广州', intl: '仅新加坡 / 硅谷' }
+const GZ_HOSTS = ['tokenhub.tencentmaas.com', 'tokenhub.tencentcloudmaas.com']
+
+/** 当前选中的模型名：下拉框里的模型，或手动填写的名称 */
+function currentModel() {
+  const sel = $('#llmModelSelect')
+  if (sel.hidden || sel.value === MANUAL) return $('#llmModel').value.trim()
+  return sel.value
+}
+
+function currentBaseUrl(p) {
+  return p && p.id === 'custom' ? $('#llmBaseInput').value.trim() : $('#llmBaseSelect').value
+}
+
+function modelTags(p, m) {
+  const tags = []
+  if (p.webSearch && p.webSearch.models.includes(m.id)) tags.push('可联网')
+  if (m.thinking === 'always') tags.push('思考常开')
+  if (m.note) tags.push(m.note.replace(/模型$/, ''))
+  if (m.region) tags.push(REGION_TEXT[m.region])
+  if (m.deprecated) tags.push('即将下线')
+  return tags
+}
+
+function renderModelSelect(p, model) {
+  const sel = $('#llmModelSelect')
+  const inp = $('#llmModel')
+  if (!p.models.length) {
+    // 自定义服务没有预置模型：只显示输入框
+    sel.hidden = true
+    inp.hidden = false
+    inp.value = model || ''
+    inp.placeholder = '填写模型名称，如 gpt-4o-mini、qwen-plus'
+    $('#modelCount').textContent = ''
+    return
+  }
+  const groups = new Map()
+  for (const m of p.models) {
+    if (!groups.has(m.group)) groups.set(m.group, [])
+    groups.get(m.group).push(m)
+  }
+  const opt = (m) => {
+    const tags = modelTags(p, m)
+    return `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}（${escapeHtml(m.id)}）${tags.length ? ` · ${escapeHtml(tags.join(' · '))}` : ''}</option>`
+  }
+  const multi = groups.size > 1
+  sel.innerHTML =
+    [...groups.entries()]
+      .map(([g, list]) => (multi ? `<optgroup label="${escapeHtml(g)}">${list.map(opt).join('')}</optgroup>` : list.map(opt).join('')))
+      .join('') + `<optgroup label="其他"><option value="${MANUAL}">✏️ 手动填写模型名称…</option></optgroup>`
+  sel.hidden = false
+  $('#modelCount').textContent = `（预置 ${p.models.length} 个）`
+  inp.placeholder = '填写模型名称（model 参数值），如 deepseek-v4-flash'
+  // 只有完全等于预置 id 才选中下拉项；别名或未收录的名称放进输入框，保持原样
+  const exact = p.models.some((m) => m.id === model)
+  sel.value = exact ? model : MANUAL
+  inp.hidden = exact
+  inp.value = model || '' // 切到「手动填写」时，输入框里预填当前模型名，方便改
+}
+
+/** 模型下方的说明：model 参数、用途、思考、地域、未收录提示 */
+function renderModelHint() {
+  const p = providerById(draft.provider)
+  const hint = $('#modelHint')
+  if (!p) return (hint.textContent = '')
+  const model = currentModel()
+  if (p.id === 'custom') return (hint.textContent = '自定义服务不传思考参数，以模型默认行为为准')
+  if (!model) return (hint.textContent = '请填写模型名称，需与服务商控制台里的 model 参数值完全一致')
+  const m = findModel(p, model)
+  const parts = []
+  if (!m) {
+    parts.push(
+      `未收录的模型：会按「深度思考」开关传参，模型不认这个参数时自动去掉重试。请确认名称拼写正确，并已在${p.id === 'tokenhub' ? ' TokenHub 控制台' : '服务商控制台'}开通该模型`,
+    )
+  } else {
+    if (m.id !== model) parts.push(`${model} 是「${m.name}」（${m.id}）的另一个参数名`)
+    if (m.special) parts.push(`${m.note}，不太适合做财经分析`)
+    if (m.thinking === 'always') parts.push('该模型的深度思考不支持关闭')
+    if (m.thinking === 'auto') parts.push('该模型不支持开关深度思考，按模型默认行为（可能会显示思考过程）')
+    if (m.deprecated) parts.push('官方标注即将下线，建议换用新版本')
+    let host = ''
+    try {
+      host = new URL(currentBaseUrl(p)).hostname
+    } catch {
+      /* ignore */
+    }
+    const gz = GZ_HOSTS.includes(host)
+    if (m.region === 'cn' && host && !gz) parts.push('该模型只在广州地域提供，请把接入地址切到广州')
+    if (m.region === 'intl' && gz) parts.push('该模型只在新加坡 / 硅谷站点提供，广州地址调不通；注意两个站点的 API Key 不互通')
+  }
+  hint.textContent = parts.join('；')
+}
+
+function onModelChanged() {
+  updateThinkingRow()
+  updateSearchRow()
+}
+
 function updateSearchRow() {
   if (!draft) return
   const p = providerById(draft.provider)
-  const model = $('#llmModel').value.trim()
-  const baseUrl = p && p.id === 'custom' ? $('#llmBaseInput').value.trim() : $('#llmBaseSelect').value
+  const model = currentModel()
+  const baseUrl = currentBaseUrl(p)
   const sup = searchSupport(draft.provider, model, baseUrl)
   const row = $('#searchRow')
   const box = $('#llmSearch')
@@ -211,22 +311,18 @@ function updateSearchRow() {
 
 function updateThinkingRow() {
   const p = providerById(draft.provider)
-  const model = $('#llmModel').value.trim()
+  const m = findModel(p, currentModel())
   const row = $('#thinkingRow')
   const box = $('#llmThinking')
-  if (!p || !p.supportsThinking) {
-    row.classList.add('is-disabled')
-    box.disabled = true
-    box.checked = false
-    $('#modelHint').textContent = p && p.id === 'custom' ? '自定义服务不传思考参数，以模型默认行为为准' : ''
-    return
-  }
-  const always = (p.alwaysThinking || []).includes(model)
-  row.classList.toggle('is-disabled', always)
-  box.disabled = always
-  if (always) box.checked = true
-  else box.checked = draft.thinking
-  $('#modelHint').textContent = always ? '该模型的深度思考不支持关闭' : ''
+  // lock：on = 常开不可关；off = 不能开关（不传参）；null = 用户可选
+  let lock = null
+  if (!p || !p.supportsThinking) lock = 'off'
+  else if (m && m.thinking === 'always') lock = 'on'
+  else if (m && m.thinking === 'auto') lock = 'off'
+  row.classList.toggle('is-disabled', !!lock)
+  box.disabled = !!lock
+  box.checked = lock ? lock === 'on' : draft.thinking
+  renderModelHint()
 }
 
 function renderProviderFields() {
@@ -256,9 +352,7 @@ function renderProviderFields() {
   }
   $('#baseUrlField').hidden = p.id !== 'custom' && p.baseUrls.length <= 1
 
-  $('#modelList').innerHTML = p.models.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`).join('')
-  $('#llmModel').value = cfg.model || p.defaultModel || ''
-  $('#llmModel').placeholder = p.id === 'custom' ? '如 gpt-4o-mini、qwen-plus' : '选择或输入模型名'
+  renderModelSelect(p, cfg.model || p.defaultModel || '')
   updateThinkingRow()
   updateSearchRow()
 }
@@ -282,7 +376,10 @@ async function saveLlm() {
   const p = providerById(draft.provider)
   // 只保存关注列表时允许暂不填 Key
   if (!cfg.apiKey && !draft.watchlist.length) return inlineMsg('#llmMsg', '请填写 API Key', 'err')
-  if (cfg.apiKey && !cfg.model) return inlineMsg('#llmMsg', '请填写模型名称', 'err')
+  if (cfg.apiKey && !cfg.model) return inlineMsg('#llmMsg', '请选择模型，或填写模型名称', 'err')
+  if (cfg.model && !/^[A-Za-z0-9._:/@+\-]{1,120}$/.test(cfg.model)) {
+    return inlineMsg('#llmMsg', '模型名称只能包含字母、数字和 . _ - / : @ +，不能有空格或中文', 'err')
+  }
   if (cfg.apiKey && p.id === 'custom' && !/^https:\/\//.test(cfg.baseUrl || '')) return inlineMsg('#llmMsg', '自定义服务需填写 https 开头的 Base URL', 'err')
   const prevWatch = (state.llm && state.llm.watchlist) || []
   const payload = {
@@ -571,11 +668,19 @@ export function initSettings(h) {
     renderProviderFields()
     inlineMsg('#llmMsg', '')
   })
-  $('#llmModel').addEventListener('input', () => {
-    updateThinkingRow()
-    updateSearchRow()
+  $('#llmModelSelect').addEventListener('change', () => {
+    const manual = $('#llmModelSelect').value === MANUAL
+    const inp = $('#llmModel')
+    inp.hidden = !manual
+    if (!manual) inp.value = $('#llmModelSelect').value
+    else {
+      inp.focus()
+      inp.select()
+    }
+    onModelChanged()
   })
-  $('#llmBaseSelect').addEventListener('change', updateSearchRow)
+  $('#llmModel').addEventListener('input', onModelChanged)
+  $('#llmBaseSelect').addEventListener('change', onModelChanged)
   $('#llmThinking').addEventListener('change', (e) => draft && (draft.thinking = e.target.checked))
   $('#llmSearch').addEventListener('change', (e) => draft && (draft.web_search = e.target.checked))
   $('#toggleKey').addEventListener('click', () => {

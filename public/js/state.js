@@ -56,3 +56,9 @@ export function searchSupport(providerId, model, baseUrl) {
 export function providerById(id) {
   return state.providers.find((p) => p.id === id)
 }
+
+/** 在服务商模型表里查找模型（含别名），找不到返回 null；与服务端 lib/llm.js findModel 一致 */
+export function findModel(provider, model) {
+  if (!provider || !model) return null
+  return (provider.models || []).find((m) => m.id === model || (m.aliases || []).includes(model)) || null
+}

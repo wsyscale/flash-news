@@ -26,7 +26,7 @@
 | 继续追问 | 分析完成后多轮对话，上下文包含快讯、分析与历史对话；对话云端保存，换设备也能接着聊 |
 | 关注列表 | 最多 20 个板块 / 标的（支持搜索 A 股、港股、美股、ETF、指数）；分析时额外评估短期（1 个月内）与中长期（3–12 个月）影响；列表里标出相关快讯 |
 | 联网搜索 | TokenHub（广州）上的 deepseek-v4-flash / deepseek-v4-pro / hy3 可按需联网，回答带 [n] 引用角标和参考来源；未开通时自动降级为不联网 |
-| 模型 | DeepSeek、腾讯云 TokenHub（DeepSeek、混元、GLM、Kimi 等）、任意 OpenAI 兼容接口 |
+| 模型 | DeepSeek、腾讯云 TokenHub（按厂商分组预置 39 个语言模型：DeepSeek、混元、GLM、Kimi、MiniMax、Qwen、MiMo、Step）、任意 OpenAI 兼容接口；不在列表里的模型可以手动填写模型名称 |
 | 安全 | API Key 存在用户自己的云端账号里，只有本人能读；服务端只转发、不记录；所有表启用行级安全（RLS） |
 
 ## 🚀 部署（用 WorkBuddy，约 10 分钟）
