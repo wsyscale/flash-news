@@ -7,8 +7,7 @@
   "crawler": {
     "sources": {
       "wscn": {
-        "enabled": true,
-        "score": 2
+        "enabled": true
       },
       "cls": {
         "enabled": true
