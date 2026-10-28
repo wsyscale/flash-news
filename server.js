@@ -1,9 +1,10 @@
 // 快讯分析台 · 服务端入口
-//   node server.js              启动网站 + 定时抓取（默认每 20 分钟，见 lib/config.js）
+//   node server.js              启动网站 + 定时抓取（默认每 20 分钟，见 lib/config.js；来源见 lib/sources/）
 //   node server.js --crawl-once 在能直连云数据面的环境（如本机）执行一次抓取并直接入库后退出
 //
 // 数据流（线上）：
-//   定时抓取 → 服务端暂存区（落盘）→ 已登录用户浏览器拉取「服务端签名批次」→ 调用数据库 ingest_signed() 验签入库
+//   定时抓取（华尔街见闻 + 财联社电报）→ 服务端暂存区（落盘）→ 已登录用户浏览器拉取「服务端签名批次」
+//   → 调用数据库 ingest_signed() 验签入库 → 数据库返回签名收据 → 浏览器下次拉取时交回收据，服务端确认后移出暂存区
 //   之所以由浏览器转交：发布沙箱按平台安全策略不能直连本应用云数据面；签名保证入库内容确实来自本服务端。
 import http from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
@@ -12,7 +13,8 @@ import { createRequire } from 'node:module'
 import { loadConfig } from './lib/config.js'
 import { createStore } from './lib/store.js'
 import { createScheduler } from './lib/scheduler.js'
-import { verifyTicket, signBatch } from './lib/sign.js'
+import { verifyTicket, signBatch, verifyReceipt } from './lib/sign.js'
+import { publicSources } from './lib/sources/index.js'
 import { DEFAULT_SYSTEM_PROMPT, publicProviders, streamAnalysis, streamChat, testConnection } from './lib/llm.js'
 import { searchSymbols } from './lib/symbols.js'
 
@@ -22,13 +24,13 @@ if (process.argv.includes('--crawl-once')) {
   const { createServerCloud } = await import('./lib/cloud.js')
   const { crawlDirect } = await import('./lib/crawler.js')
   const cloud = createServerCloud(config.publicConfig)
-  const run = await crawlDirect({
+  const runs = await crawlDirect({
     cloud,
     secret: config.crawlerSecret,
     cfg: config.crawler,
     backfillPages: config.crawler.backfillOverride || config.crawler.defaultBackfillPages,
   })
-  process.exit(run.status === 'ok' ? 0 : 1)
+  process.exit(runs.every((r) => r.status === 'ok') ? 0 : 1)
 }
 
 if (!config.signingKey) console.warn('[config] 未配置 signingKey，登录校验与入库将不可用')
@@ -146,19 +148,26 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, scheduler.status())
 
     case 'GET /api/providers':
-      return sendJson(res, 200, { providers: publicProviders(), defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT })
+      return sendJson(res, 200, { providers: publicProviders(), defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT, sources: publicSources() })
 
-    // 浏览器拉取待入库批次（服务端签名），随后调用数据库 ingest_signed() 入库
+    // 浏览器拉取待入库批次（服务端签名），随后调用数据库 ingest_signed() 入库；
+    // 请求体可带上一批的数据库收据 { receipts: [{payload, sig}] }，验签通过后把那一批移出暂存区
     case 'POST /api/sync/pull': {
       const user = requireUser(req, res)
       if (!user) return
       if (!allow(user.uid, 'sync', 30)) return sendJson(res, 429, { error: '同步过于频繁' })
-      const items = store.pendingItems(BATCH_ITEMS)
-      const runs = store.pendingRuns(BATCH_RUNS)
-      const remaining = Math.max(0, store.pendingCount() - items.length)
-      if (!items.length && !runs.length) return sendJson(res, 200, { count: 0, runs: 0, remaining: 0, status: scheduler.status() })
-      const batch = signBatch(config.signingKey, { items, runs })
-      return sendJson(res, 200, { ...batch, count: items.length, runs: runs.length, remaining, status: scheduler.status() })
+      const body = await readBody(req, 16 * 1024)
+      let confirmed = 0
+      for (const rc of Array.isArray(body.receipts) ? body.receipts.slice(0, 10) : []) {
+        const bid = verifyReceipt(config.signingKey, rc)
+        if (bid) confirmed += store.confirm(bid)
+      }
+      if (body.peek) return sendJson(res, 200, { count: 0, runs: 0, remaining: store.pendingCount(), confirmed, status: scheduler.status() })
+      const batch = store.takeBatch(BATCH_ITEMS, BATCH_RUNS)
+      if (!batch) return sendJson(res, 200, { count: 0, runs: 0, remaining: 0, confirmed, status: scheduler.status() })
+      const remaining = Math.max(0, store.pendingCount() - batch.items.length)
+      const signed = signBatch(config.signingKey, batch)
+      return sendJson(res, 200, { ...signed, bid: batch.bid, count: batch.items.length, runs: batch.runs.length, remaining, confirmed, status: scheduler.status() })
     }
 
     case 'POST /api/crawl/run': {

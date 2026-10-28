@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>快讯分析台 · 7×24 重要快讯 + AI 深度解读</title>
-  <meta name="description" content="自动收录华尔街见闻 7×24 重要快讯，一键调用大模型深度分析" />
+  <title>快讯分析台 · 7×24 快讯 + AI 深度解读</title>
+  <meta name="description" content="自动收录华尔街见闻 7×24 与财联社电报，一键调用大模型深度分析" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23165dff'/%3E%3Cpath d='M36 8 18 36h12l-4 20 20-30H34z' fill='white'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/css/app.css" />
 </head>
@@ -21,12 +21,12 @@
       <div class="brand-row"><span class="logo-mark">快</span><span class="brand-name">快讯分析台</span></div>
       <h1>7×24 重要快讯<br />一键 AI 深度解读</h1>
       <ul class="feature-list">
-        <li><b>自动收录</b>每 20 分钟抓取华尔街见闻重要快讯，自动去重入库</li>
+        <li><b>自动收录</b>定时抓取华尔街见闻 7×24 与财联社电报，分来源展示，自动去重入库</li>
         <li><b>深度分析</b>点击「分析」，用你自己的 DeepSeek / 腾讯云 TokenHub Key 解读影响，TokenHub 模型可联网搜索最新信息</li>
         <li><b>继续追问</b>分析完成后可就这条快讯与 AI 多轮对话，追问板块、标的与风险</li>
         <li><b>私有留存</b>分析与对话私有保存；快讯保留近 14 天，过期自动清理</li>
       </ul>
-      <p class="auth-foot">快讯来源：华尔街见闻 · AI 内容仅供参考，不构成投资建议</p>
+      <p class="auth-foot">快讯来源：华尔街见闻、财联社 · AI 内容仅供参考，不构成投资建议</p>
     </div>
 
     <div class="auth-panel">
@@ -152,6 +152,10 @@
 
     <main class="layout">
       <section class="feed">
+        <div class="source-tabs" id="sourceTabs" role="tablist" aria-label="快讯来源">
+          <button type="button" class="source-tab is-active" role="tab" aria-selected="true" data-source="wscn">华尔街见闻<span class="tab-badge" hidden></span></button>
+          <button type="button" class="source-tab" role="tab" aria-selected="false" data-source="cls">财联社电报<span class="tab-badge" hidden></span></button>
+        </div>
         <div class="feed-head">
           <div class="search">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M10 3a7 7 0 0 1 5.6 11.2l4.6 4.6-1.4 1.4-4.6-4.6A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg>
@@ -193,7 +197,7 @@
             <dt>本次新增</dt><dd id="kvInserted">—</dd>
             <dt>下次抓取</dt><dd id="kvNext">—</dd>
           </dl>
-          <p class="card-note" id="retentionNote">来源：华尔街见闻 7×24（重要级别），按快讯 ID 与内容双重去重；仅保留近 14 天，过期自动清理。</p>
+          <p class="card-note" id="retentionNote">当前来源：华尔街见闻 7×24（重要级别）。按来源分别去重；仅保留近 14 天，过期自动清理。</p>
         </div>
         <div class="card" id="llmHintCard">
           <div class="card-title">AI 分析</div>
@@ -324,8 +328,8 @@
           <div class="card-title mt">最近抓取记录</div>
           <div class="table-wrap">
             <table class="runs">
-              <thead><tr><th>时间</th><th>触发</th><th>结果</th><th>抓取</th><th>新增</th><th>耗时</th></tr></thead>
-              <tbody id="runsBody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
+              <thead><tr><th>时间</th><th>来源</th><th>触发</th><th>结果</th><th>抓取</th><th>新增</th><th>耗时</th></tr></thead>
+              <tbody id="runsBody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
             </table>
           </div>
         </div>

@@ -12,3 +12,5 @@
 - 数据库结构有任何改动，都要同步写进 `db/schema.sql`：用 `-- @step <mode> <说明>` 标记新步骤，保持可以重复执行（`IF NOT EXISTS` / `CREATE OR REPLACE` / 先删后建）。函数权限要先 `REVOKE ... FROM PUBLIC, anon, authenticated` 再按需授予。
 - 前端没有构建步骤（原生 ES Module）；视觉风格是浅色简洁资讯风，利好红、利空绿（A 股习惯）。
 - 云服务 SDK 固定版本，`package.json` 和 `public/index.html` 里的 CDN 地址要保持一致。
+- 快讯来源在 `lib/sources/`（`wscn` 华尔街见闻、`cls` 财联社电报）。新增来源：加一个模块（`id / name / defaults / normalize / fetchPage`）并注册到 `lib/sources/index.js`，前端 tab 写在 `public/index.html` 的 `#sourceTabs`、来源名单在 `public/js/state.js`；数据库按 `(source, source_id)` 去重，不需要改表。
+- 入库确认靠数据库签名的收据（`ingest_signed` 返回 `receipt`，浏览器交回 `/api/sync/pull`），不要改回「按最大 id 判断是否已入库」：财联社的 id 和发布时间顺序不一致。

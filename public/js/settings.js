@@ -1,6 +1,6 @@
 // 设置弹窗：模型配置（云端私有保存）/ 抓取设置（管理员可改间隔）/ 账号
 import { cloud, apiJson, clearTicket } from './cloud.js'
-import { state, providerById, searchSupport, findModel } from './state.js'
+import { state, providerById, searchSupport, findModel, sourceById } from './state.js'
 import { $, $$, escapeHtml, fmtDateTime, relTime, toast, withBusy, cloudErrorText, maskEmail, maskPhone, debounce } from './utils.js'
 import { MAX_WATCH, QUICK_SECTORS, WATCH_TYPE_LABEL, watchKey, keywordsOf } from './watch.js'
 
@@ -442,16 +442,28 @@ function renderCrawlDetail(st, cs) {
     $('#crawlDetail').innerHTML = `<dt>状态</dt><dd>读取失败</dd>${retentionRows}`
     return
   }
-  const last = st.lastRun
   const src = { database: '网站设置', env: '环境变量（优先）', default: '默认值' }[st.settingsSource] || st.settingsSource
+  const sources = Array.isArray(st.sources) && st.sources.length ? st.sources : [{ id: 'wscn', name: '华尔街见闻', lastRun: st.lastRun, pending: st.pending }]
+  const perSource = sources
+    .map((s) => {
+      const last = s.lastRun
+      const result = s.enabled === false
+        ? '<span class="muted">已在配置中关闭</span>'
+        : !last
+          ? '尚未抓取'
+          : last.status === 'ok'
+            ? `<span class="st-ok">成功</span> · ${relTime(last.finished_at || last.started_at)} · 抓取 ${last.fetched} 条，新增 ${last.new_items ?? last.inserted ?? 0} 条`
+            : `<span class="st-err">失败</span> · ${relTime(last.finished_at || last.started_at)}：${escapeHtml(last.message || '')}`
+      return `<dt>${escapeHtml(s.name || s.id)}</dt><dd>${result}${s.pending ? ` <span class="muted">（待入库 ${s.pending} 条）</span>` : ''}</dd>`
+    })
+    .join('')
   $('#crawlDetail').innerHTML = `
     <dt>抓取间隔</dt><dd>每 <b>${st.intervalMinutes}</b> 分钟 <span class="muted">（来源：${src}）</span></dd>
     <dt>运行状态</dt><dd>${st.running ? '抓取中…' : st.enabled ? '<span class="st-ok">运行中</span>' : '<span class="st-err">已暂停</span>'}</dd>
-    <dt>上次抓取</dt><dd>${last ? `${fmtDateTime(last.finished_at || last.started_at)}（${relTime(last.finished_at || last.started_at)}）` : '—'}</dd>
-    <dt>上次结果</dt><dd>${last ? (last.status === 'ok' ? `<span class="st-ok">成功</span>，抓取 ${last.fetched} 条，新增 ${last.new_items ?? last.inserted ?? 0} 条` : `<span class="st-err">失败</span>：${escapeHtml(last.message || '')}`) : '—'}</dd>
+    ${perSource}
     <dt>待入库</dt><dd>${st.pending || 0} 条 <span class="muted">（已登录用户访问时自动写入云数据库）</span></dd>
     <dt>下次抓取</dt><dd>${st.nextRunAt ? `${fmtDateTime(st.nextRunAt)}（${relTime(st.nextRunAt)}）` : '—'}</dd>
-    <dt>每次回补</dt><dd>最多 ${st.backfillPages} 页 × 20 条（距上次抓取新增过多时自动翻页补齐）</dd>${retentionRows}`
+    <dt>每次回补</dt><dd>每个来源最多 ${st.backfillPages} 页（华尔街见闻 20 条/页，财联社 50 条/页；距上次抓取新增过多时自动翻页补齐）</dd>${retentionRows}`
 }
 
 function renderAdminBox(st, cs) {
@@ -487,22 +499,23 @@ function renderAdminBox(st, cs) {
 async function renderRuns() {
   const { data, error } = await cloud.database
     .from('crawl_runs')
-    .select('started_at, finished_at, status, trigger, pages, fetched, inserted, duration_ms, message')
+    .select('source, started_at, finished_at, status, trigger, pages, fetched, inserted, duration_ms, message')
     .order('started_at', { ascending: false })
-    .limit(15)
+    .limit(20)
   const body = $('#runsBody')
   if (error) {
-    body.innerHTML = `<tr><td colspan="6" class="st-err">读取失败：${escapeHtml(cloudErrorText(error))}</td></tr>`
+    body.innerHTML = `<tr><td colspan="7" class="st-err">读取失败：${escapeHtml(cloudErrorText(error))}</td></tr>`
     return
   }
   if (!data || !data.length) {
-    body.innerHTML = '<tr><td colspan="6" class="muted">暂无记录</td></tr>'
+    body.innerHTML = '<tr><td colspan="7" class="muted">暂无记录</td></tr>'
     return
   }
   body.innerHTML = data
     .map(
       (r) => `<tr>
       <td>${fmtDateTime(r.started_at)}</td>
+      <td>${escapeHtml(sourceById(r.source || 'wscn').shortName || r.source)}</td>
       <td>${TRIGGER[r.trigger] || escapeHtml(r.trigger)}</td>
       <td>${r.status === 'ok' ? '<span class="st-ok">成功</span>' : `<span class="st-err" title="${escapeHtml(r.message || '')}">失败</span>`}</td>
       <td>${r.fetched}（${r.pages} 页）</td>
@@ -580,12 +593,17 @@ async function crawlNow() {
     try {
       const r = await apiJson('/api/crawl/run', { method: 'POST' })
       const run = r.run || {}
+      // 新版服务端返回 { runs: [每个来源一条], status }；旧版直接返回一条
+      const runs = Array.isArray(run.runs) ? run.runs : run.status ? [run] : []
+      const summary = runs
+        .map((x) => `${sourceById(x.source || 'wscn').shortName}${x.status === 'ok' ? ` 抓取 ${x.fetched} 条、新增 ${x.new_items ?? 0} 条` : ` 失败：${x.message || ''}`}`)
+        .join('；')
       if (run.skipped) inlineMsg('#admMsg', '已有抓取任务在进行中', '')
-      else if (run.status === 'ok') {
-        inlineMsg('#admMsg', `完成：抓取 ${run.fetched} 条，新增 ${run.new_items ?? 0} 条，正在写入数据库…`, 'ok')
+      else if (runs.some((x) => x.status === 'ok')) {
+        inlineMsg('#admMsg', `${summary}，正在写入数据库…`, runs.every((x) => x.status === 'ok') ? 'ok' : 'err')
         await hooks.onCrawled?.()
-        inlineMsg('#admMsg', `完成：抓取 ${run.fetched} 条，新增 ${run.new_items ?? 0} 条`, 'ok')
-      } else inlineMsg('#admMsg', `抓取失败：${run.message || ''}`, 'err')
+        inlineMsg('#admMsg', summary, runs.every((x) => x.status === 'ok') ? 'ok' : 'err')
+      } else inlineMsg('#admMsg', `抓取失败：${summary}`, 'err')
       if (r.status) hooks.onStatus(r.status)
       renderRuns()
     } catch (err) {

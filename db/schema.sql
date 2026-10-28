@@ -1,4 +1,4 @@
--- 快讯分析台：完整建库脚本（从线上数据库导出整理，2026-10-07）
+-- 快讯分析台：完整建库脚本（2026-10-07 从线上数据库导出整理；2026-10-28 改为多来源：华尔街见闻 + 财联社电报）
 --
 -- 用法：在新账号开通云服务后，按顺序【逐条、串行】执行下面的每一步。
 --   · 云数据库执行接口一次只接受一条语句，所以每一步前都有一行标记：
@@ -7,6 +7,7 @@
 --     同类的简单语句合并在一个 DO 块里（算一条语句，整块要么全部成功、要么全部回滚）。
 --   · 不要并行执行：后面的步骤依赖前面的表 / 函数已经提交，并行会报 42P01。
 --   · 整个脚本可以重复执行（IF NOT EXISTS / CREATE OR REPLACE / 先删后建策略），中途失败修好后从失败那步继续即可。
+--   · 旧版（只有华尔街见闻、字段叫 wscn_id）的数据库也用这份脚本升级：从头到尾按顺序重跑一遍即可，「升级旧库」那一步会完成改名和约束替换，已有数据保留。
 --   · 推荐用 `node scripts/setup.mjs step <序号>` 取出某一步的 sqlBase64 再执行，避免引号 / 换行被转义。
 --   · 抓取密钥那一步需要参数，由 `node scripts/setup.mjs step <序号>` 自动从 config/secret.json 生成。
 --
@@ -26,10 +27,11 @@ CREATE EXTENSION IF NOT EXISTS pg_cron;
 -- 二、数据表
 -- ======================================================================
 
--- @step migrate 建表 news_flash（快讯）
+-- @step migrate 建表 news_flash（快讯；source 区分来源：wscn 华尔街见闻 / cls 财联社电报）
 CREATE TABLE IF NOT EXISTS public.news_flash (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  wscn_id BIGINT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'wscn',
+  source_id BIGINT NOT NULL,
   title TEXT NOT NULL DEFAULT '',
   content_text TEXT NOT NULL DEFAULT '',
   content_html TEXT,
@@ -44,8 +46,9 @@ CREATE TABLE IF NOT EXISTS public.news_flash (
   content_hash TEXT NOT NULL,
   display_time TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT news_flash_wscn_id_key UNIQUE (wscn_id),
-  CONSTRAINT news_flash_content_hash_key UNIQUE (content_hash)
+  CONSTRAINT news_flash_source_check CHECK (source ~ '^[a-z][a-z0-9_]{1,15}$'),
+  CONSTRAINT news_flash_source_id_key UNIQUE (source, source_id),
+  CONSTRAINT news_flash_source_hash_key UNIQUE (source, content_hash)
 );
 
 -- @step migrate 建表 crawl_runs（抓取记录）
@@ -60,7 +63,8 @@ CREATE TABLE IF NOT EXISTS public.crawl_runs (
   inserted INT NOT NULL DEFAULT 0,
   duration_ms INT NOT NULL DEFAULT 0,
   message TEXT,
-  run_key TEXT
+  run_key TEXT,
+  source TEXT NOT NULL DEFAULT 'wscn'
 );
 
 -- @step migrate 建表 crawler_settings（抓取设置，单行 id=1）
@@ -142,11 +146,37 @@ CREATE TABLE IF NOT EXISTS public.news_chat (
 -- 三、索引、说明与 RLS 开关
 -- ======================================================================
 
--- @step migrate 索引（6 个）
+-- @step migrate 升级旧库：快讯表改为多来源（wscn_id → source + source_id）；新装或已升级时什么都不做
 DO $$
 BEGIN
-  -- 快讯按时间倒序
-  CREATE INDEX IF NOT EXISTS news_flash_display_time_idx ON public.news_flash (display_time DESC, id DESC);
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'news_flash' AND column_name = 'wscn_id') THEN
+    ALTER TABLE public.news_flash RENAME COLUMN wscn_id TO source_id;
+  END IF;
+  ALTER TABLE public.news_flash ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'wscn';
+  ALTER TABLE public.news_flash DROP CONSTRAINT IF EXISTS news_flash_wscn_id_key;
+  ALTER TABLE public.news_flash DROP CONSTRAINT IF EXISTS news_flash_content_hash_key;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'news_flash_source_check') THEN
+    ALTER TABLE public.news_flash ADD CONSTRAINT news_flash_source_check CHECK (source ~ '^[a-z][a-z0-9_]{1,15}$');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'news_flash_source_id_key') THEN
+    ALTER TABLE public.news_flash ADD CONSTRAINT news_flash_source_id_key UNIQUE (source, source_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'news_flash_source_hash_key') THEN
+    ALTER TABLE public.news_flash ADD CONSTRAINT news_flash_source_hash_key UNIQUE (source, content_hash);
+  END IF;
+  ALTER TABLE public.crawl_runs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'wscn';
+END
+$$;
+
+-- @step migrate 索引（7 个）
+DO $$
+BEGIN
+  -- 旧版的「全部来源按时间」索引，已被下面按来源的索引取代
+  DROP INDEX IF EXISTS public.news_flash_display_time_idx;
+  -- 快讯按来源 + 时间倒序（列表、新快讯提示、今日统计）
+  CREATE INDEX IF NOT EXISTS news_flash_source_time_idx ON public.news_flash (source, display_time DESC, id DESC);
+  -- 快讯按时间（过期清理）
+  CREATE INDEX IF NOT EXISTS news_flash_time_idx ON public.news_flash (display_time);
   -- 抓取记录按时间
   CREATE INDEX IF NOT EXISTS crawl_runs_started_idx ON public.crawl_runs (started_at DESC);
   -- 抓取记录去重键
@@ -164,7 +194,7 @@ $$;
 DO $$
 BEGIN
   -- news_flash
-  COMMENT ON TABLE public.news_flash IS '华尔街见闻 7x24 快讯（score>=2），wscn_id + 内容哈希双重去重；超过保留天数由 purge_expired_news() 每小时清理';
+  COMMENT ON TABLE public.news_flash IS '快讯：source=wscn 华尔街见闻 7x24（score>=2）/ cls 财联社电报（普通电报，level B=加红）；同一来源内按 source_id 与内容哈希双重去重；超过保留天数由 purge_expired_news() 每小时清理';
   -- crawler_settings
   COMMENT ON TABLE public.crawler_settings IS '抓取设置（单行 id=1）：interval_minutes 抓取间隔分钟数（默认20）、enabled 是否启用、backfill_pages 最多回补页数、retention_days 数据保留天数（1-14，默认14）';
   -- news_chat
@@ -223,7 +253,7 @@ AS $$
   )
 $$;
 
--- @step migrate 函数 ingest_items_internal()：快讯去重入库（仅供其他函数内部调用）
+-- @step migrate 函数 ingest_items_internal()：快讯去重入库（仅供其他函数内部调用；同一来源内按 source_id / 内容哈希去重）
 CREATE OR REPLACE FUNCTION public.ingest_items_internal(p_items jsonb)
 RETURNS int
 LANGUAGE plpgsql
@@ -239,21 +269,29 @@ BEGIN
   IF jsonb_array_length(p_items) > 500 THEN
     RAISE EXCEPTION 'too many items in one batch';
   END IF;
-  WITH src AS (
-    SELECT e FROM jsonb_array_elements(p_items) AS e
-    WHERE (e->>'wscn_id') ~ '^[0-9]+$'
+  WITH raw AS (
+    -- 兼容旧格式：没有 source 的条目视为华尔街见闻，id 取 wscn_id
+    SELECT e,
+           coalesce(nullif(e->>'source', ''), 'wscn') AS src,
+           coalesce(e->>'source_id', e->>'wscn_id') AS sid
+    FROM jsonb_array_elements(p_items) AS e
+  ), src AS (
+    SELECT * FROM raw
+    WHERE src ~ '^[a-z][a-z0-9_]{1,15}$'
+      AND sid ~ '^[0-9]{1,18}$'
       AND CASE WHEN (e->>'display_time') ~ '^[0-9]+(\.[0-9]+)?$'
                THEN to_timestamp((e->>'display_time')::double precision) >= v_cutoff
                ELSE false END
   ), ins AS (
-    INSERT INTO news_flash (wscn_id, title, content_text, content_html, content_more, score, channels, uri, article, images, symbols, tags, content_hash, display_time)
+    INSERT INTO news_flash (source, source_id, title, content_text, content_html, content_more, score, channels, uri, article, images, symbols, tags, content_hash, display_time)
     SELECT
-      (e->>'wscn_id')::bigint,
+      src,
+      sid::bigint,
       left(coalesce(e->>'title', ''), 500),
       left(coalesce(e->>'content_text', ''), 20000),
       left(coalesce(e->>'content_html', ''), 40000),
       left(coalesce(e->>'content_more', ''), 40000),
-      CASE WHEN (e->>'score') ~ '^-?[0-9]+$' THEN (e->>'score')::int ELSE 0 END,
+      CASE WHEN (e->>'score') ~ '^-?[0-9]{1,6}$' THEN (e->>'score')::int ELSE 0 END,
       CASE WHEN jsonb_typeof(e->'channels') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(e->'channels')) ELSE '{}'::text[] END,
       left(e->>'uri', 500),
       CASE WHEN jsonb_typeof(e->'article') = 'object' THEN e->'article' ELSE NULL END,
@@ -318,8 +356,9 @@ BEGIN
   END IF;
 
   IF p_run IS NOT NULL AND jsonb_typeof(p_run) = 'object' THEN
-    INSERT INTO crawl_runs (started_at, finished_at, status, trigger, pages, fetched, inserted, duration_ms, message)
+    INSERT INTO crawl_runs (source, started_at, finished_at, status, trigger, pages, fetched, inserted, duration_ms, message)
     VALUES (
+      CASE WHEN coalesce(p_run->>'source', '') ~ '^[a-z][a-z0-9_]{1,15}$' THEN p_run->>'source' ELSE 'wscn' END,
       coalesce((p_run->>'started_at')::timestamptz, now()),
       now(),
       left(coalesce(p_run->>'status', 'ok'), 20),
@@ -427,7 +466,8 @@ BEGIN
     'adm', EXISTS (SELECT 1 FROM app_admins WHERE user_id = v_uid),
     'iat', extract(epoch FROM now())::bigint,
     'exp', extract(epoch FROM now())::bigint + 900,
-    'latest', (SELECT max(wscn_id) FROM news_flash),
+    -- 每个来源在数据库里的最新发布时间（秒）；{} 表示数据库还没有快讯
+    'latest', coalesce((SELECT jsonb_object_agg(source, extract(epoch FROM mx)::bigint) FROM (SELECT source, max(display_time) AS mx FROM news_flash GROUP BY source) t), '{}'::jsonb),
     'lr', (SELECT extract(epoch FROM max(started_at))::bigint FROM crawl_runs),
     'cs', (SELECT jsonb_build_object('interval', interval_minutes, 'enabled', enabled, 'backfill', backfill_pages, 'retention', retention_days, 'ts', extract(epoch FROM updated_at)::bigint) FROM crawler_settings WHERE id = 1)
   )::text INTO v_payload;
@@ -449,6 +489,7 @@ DECLARE
   v_received int := 0;
   v_inserted int := 0;
   v_runs int := 0;
+  v_receipt text;
 BEGIN
   IF v_uid IS NULL OR v_uid = 'anon' THEN
     RAISE EXCEPTION 'login required' USING ERRCODE = '42501';
@@ -471,8 +512,9 @@ BEGIN
   END IF;
   IF jsonb_typeof(v->'runs') = 'array' AND jsonb_array_length(v->'runs') > 0 THEN
     WITH ins AS (
-      INSERT INTO crawl_runs (run_key, started_at, finished_at, status, trigger, pages, fetched, inserted, duration_ms, message)
+      INSERT INTO crawl_runs (run_key, source, started_at, finished_at, status, trigger, pages, fetched, inserted, duration_ms, message)
       SELECT left(r->>'run_key', 80),
+             CASE WHEN coalesce(r->>'source', '') ~ '^[a-z][a-z0-9_]{1,15}$' THEN r->>'source' ELSE 'wscn' END,
              (r->>'started_at')::timestamptz,
              coalesce((r->>'finished_at')::timestamptz, (r->>'started_at')::timestamptz),
              left(coalesce(r->>'status', 'ok'), 20),
@@ -490,7 +532,16 @@ BEGIN
     SELECT count(*) INTO v_runs FROM ins;
     DELETE FROM crawl_runs WHERE id <= (SELECT id FROM crawl_runs ORDER BY id DESC OFFSET 1000 LIMIT 1);
   END IF;
-  RETURN jsonb_build_object('received', v_received, 'inserted', v_inserted, 'runs', v_runs, 'latest', (SELECT max(wscn_id) FROM news_flash));
+  -- 收据：证明这一批（bid）已经由数据库处理完毕（新增、重复或过期都算），服务端验签后不再重发
+  IF coalesce(v->>'bid', '') ~ '^[A-Za-z0-9_-]{8,64}$' THEN
+    v_receipt := jsonb_build_object('typ', 'receipt', 'bid', v->>'bid', 'iat', extract(epoch FROM now())::bigint)::text;
+  END IF;
+  RETURN jsonb_build_object(
+    'received', v_received,
+    'inserted', v_inserted,
+    'runs', v_runs,
+    'receipt', CASE WHEN v_receipt IS NULL THEN NULL ELSE jsonb_build_object('payload', v_receipt, 'sig', encode(hmac(v_receipt, v_key, 'sha256'), 'hex')) END
+  );
 END;
 $$;
 

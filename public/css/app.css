@@ -185,6 +185,21 @@ textarea { resize: vertical; line-height: 1.5; }
 .layout { max-width: 1200px; margin: 0 auto; padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
 .side { position: sticky; top: 78px; }
 .feed { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px 8px; min-height: 60vh; }
+/* 来源 tab */
+.source-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px -20px 14px; padding: 0 20px; overflow-x: auto; scrollbar-width: none; }
+.source-tabs::-webkit-scrollbar { display: none; }
+.source-tab {
+  position: relative; border: 0; background: none; padding: 10px 14px 11px; font-size: 15px; font-weight: 600; color: var(--text-3);
+  cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px;
+}
+.source-tab:hover { color: var(--text); }
+.source-tab.is-active { color: var(--primary); }
+.source-tab.is-active::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: var(--primary); }
+.tab-badge { min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--up); color: #fff; font-size: 11px; line-height: 18px; text-align: center; font-weight: 600; }
+.tag.topic { background: #eef4ff; color: #3b6fd8; }
+.stock-chip { padding: 0 6px; border-radius: 4px; line-height: 20px; background: #f6f2ff; color: #6b46c1; }
+.stock-chip small { color: #9a86cf; margin-left: 2px; font-size: 11px; }
+.src-badge { display: inline-block; padding: 0 6px; margin-right: 6px; border-radius: 4px; background: var(--line-2); color: var(--text-2); font-size: 12px; line-height: 20px; vertical-align: 1px; }
 .feed-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .search { flex: 1; min-width: 220px; position: relative; color: var(--text-3); }
 .search svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); }
@@ -436,6 +451,8 @@ table.runs tr:last-child td { border-bottom: 0; }
   .auth-foot { display: none; }
   .auth-panel { padding: 24px 18px 40px; place-items: start center; }
   .feed { padding: 12px 14px 6px; border-radius: 0; box-shadow: none; }
+  .source-tabs { margin: -6px -14px 12px; padding: 0 8px; }
+  .source-tab { padding: 10px 12px 11px; font-size: 14px; }
   .layout { padding: 0; }
   .flash { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; }
   .flash-time::after { right: -8px; }

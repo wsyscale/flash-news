@@ -1,6 +1,6 @@
 // 分析抽屉：查看历史分析 / 流式生成新分析 / 保存到云端；分析完成后可继续追问（chat.js）
 import { cloud, api } from './cloud.js'
-import { state, SENTIMENT, parseSentiment, activeLlmConfig, providerById } from './state.js'
+import { state, SENTIMENT, parseSentiment, activeLlmConfig, providerById, sourceById } from './state.js'
 import { $, escapeHtml, fmtDateTime, toast, cloudErrorText } from './utils.js'
 import { markAnalyzed, setBusy } from './feed.js'
 import { renderMarkdown, renderSources, sourcesText, readSse, responseError } from './markdown.js'
@@ -71,7 +71,7 @@ function searchPill(meta) {
 
 function renderNews(n) {
   $('#drawerNews').innerHTML = `
-    <div class="dn-time">${escapeHtml(fmtDateTime(n.display_time))}${n.score >= 3 ? ' · <b style="color:var(--up)">重要</b>' : ''}</div>
+    <div class="dn-time"><span class="src-badge">${escapeHtml(sourceById(n.source || 'wscn').name)}</span>${escapeHtml(fmtDateTime(n.display_time))}${n.score >= 3 ? ' · <b style="color:var(--up)">重要</b>' : ''}</div>
     ${n.title ? `<div class="dn-title">${escapeHtml(n.title)}</div>` : ''}
     <div class="dn-text">${escapeHtml(n.content_text)}</div>
     ${n.uri ? `<a href="${escapeHtml(n.uri)}" target="_blank" rel="noopener noreferrer" style="font-size:12px">查看原文 ↗</a>` : ''}`
@@ -238,12 +238,15 @@ async function startAnalysis(news) {
         watchlist,
         news: {
           id: news.id,
+          source: news.source,
           title: news.title,
           content_text: news.content_text,
           content_more: news.content_more,
           display_time: news.display_time,
           uri: news.uri,
           article: news.article,
+          symbols: news.symbols,
+          tags: news.tags,
         },
       },
     })

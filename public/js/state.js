@@ -13,6 +13,12 @@ export const state = {
   status: null,
   /** 数据库保留天数（crawler_settings.retention_days，1–14，默认 14） */
   retentionDays: 14,
+  /** 快讯来源（来自 /api/providers 的 sources）与当前 tab */
+  sources: [
+    { id: 'wscn', name: '华尔街见闻', shortName: '见闻', homepage: 'https://wallstreetcn.com/live/global' },
+    { id: 'cls', name: '财联社电报', shortName: '财联社', homepage: 'https://www.cls.cn/telegraph' },
+  ],
+  source: 'wscn',
 }
 
 export const SENTIMENT = {
@@ -61,4 +67,9 @@ export function providerById(id) {
 export function findModel(provider, model) {
   if (!provider || !model) return null
   return (provider.models || []).find((m) => m.id === model || (m.aliases || []).includes(model)) || null
+}
+
+/** 来源信息；未知来源返回一个兜底对象 */
+export function sourceById(id) {
+  return state.sources.find((s) => s.id === id) || { id, name: id || '未知来源', shortName: id || '未知' }
 }

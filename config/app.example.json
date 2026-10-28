@@ -5,10 +5,15 @@
     "publishableKey": "wbpk_<开通云服务后返回的 publishableKey>"
   },
   "crawler": {
-    "sourceUrl": "https://api-one-wscn.awtmt.com/apiv1/search/live",
-    "channel": "global-channel",
-    "limit": 20,
-    "score": 2,
+    "sources": {
+      "wscn": {
+        "enabled": true,
+        "score": 2
+      },
+      "cls": {
+        "enabled": true
+      }
+    },
     "defaultIntervalMinutes": 20,
     "defaultBackfillPages": 5,
     "requestTimeoutMs": 15000,

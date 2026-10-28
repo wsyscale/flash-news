@@ -1,11 +1,12 @@
-// 快讯时间线：分页、搜索、筛选、新消息提示、今日统计
+// 快讯时间线：来源 tab、分页、搜索、筛选、新消息提示、今日统计
 import { cloud } from './cloud.js'
-import { state, SENTIMENT } from './state.js'
+import { state, SENTIMENT, sourceById } from './state.js'
 import { $, $$, escapeHtml, fmtTime, dayKey, dayLabel, debounce, cloudErrorText, toast } from './utils.js'
 import { matchWatch, relatedOrFilter } from './watch.js'
 
 const PAGE = 30
-const COLS = 'id, wscn_id, title, content_text, content_more, score, channels, uri, article, images, display_time'
+const COLS = 'id, source, source_id, title, content_text, content_more, score, channels, uri, article, images, symbols, tags, display_time'
+const TAB_KEY = 'flash-news.source'
 const CHANNELS = {
   'a-stock-channel': 'A股',
   'hk-stock-channel': '港股',
@@ -28,8 +29,10 @@ const feed = {
   loading: false,
   ended: false,
   lastDay: null,
-  newestTime: null,
+  newestTime: null, // 当前 tab 列表里最新一条的时间（「有 N 条新快讯」提示用）
+  seenTime: {}, // 每个来源看过的最新时间（另一个 tab 上的未读角标用）
   seq: 0,
+  onSourceChange: () => {},
   onAnalyze: () => {},
   onNeedWatch: () => {},
 }
@@ -56,6 +59,7 @@ async function buildQuery(withCount) {
   let q = cloud.database
     .from('news_flash')
     .select(COLS, withCount ? { count: 'exact' } : undefined)
+    .eq('source', state.source)
     .order('display_time', { ascending: false })
     .order('id', { ascending: false })
   if (feed.filter === 'important') q = q.gte('score', 3)
@@ -86,6 +90,25 @@ function channelTags(channels) {
   return out.slice(0, 4)
 }
 
+/** 来源标注的相关个股（财联社电报带）；点击跳转到对应来源的详情 / 行情不做，只展示 */
+function stockChips(symbols) {
+  const list = (Array.isArray(symbols) ? symbols : []).filter((s) => s && s.name).slice(0, 4)
+  if (!list.length) return ''
+  const more = (symbols.length || 0) - list.length
+  return (
+    list.map((s) => `<span class="stock-chip" title="${escapeHtml([s.name, s.code || s.key, s.market].filter(Boolean).join(' · '))}">${escapeHtml(s.name)}</span>`).join('') +
+    (more > 0 ? `<span class="stock-chip" title="${escapeHtml(symbols.slice(4).map((s) => s.name).join('、'))}">+${more}</span>` : '')
+  )
+}
+
+function topicTags(tags) {
+  return (Array.isArray(tags) ? tags : [])
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((t) => `<span class="tag topic">${escapeHtml(t)}</span>`)
+    .join('')
+}
+
 function sentimentBadge(newsId) {
   const a = state.analyses.get(newsId)
   if (!a) return ''
@@ -100,6 +123,7 @@ function renderItem(n) {
   const text = n.content_text || ''
   const long = text.length > 180
   const tags = channelTags(n.channels)
+  const isCls = n.source === 'cls'
   const imgs = Array.isArray(n.images) ? n.images.slice(0, 4) : []
   const done = state.analyses.has(n.id)
   const art = n.article && n.article.uri ? n.article : null
@@ -110,7 +134,7 @@ function renderItem(n) {
       }</span>`
     : ''
   return `
-  <article class="flash${important ? ' is-important' : ''}${hasTitle ? '' : ' no-title'}" data-id="${n.id}">
+  <article class="flash${important ? ' is-important' : ''}${hasTitle ? '' : ' no-title'}" data-id="${n.id}" data-source="${escapeHtml(n.source || 'wscn')}">
     <div class="flash-time">${fmtTime(n.display_time)}</div>
     <div class="flash-body">
       ${hasTitle ? `<h3 class="flash-title">${escapeHtml(n.title)}</h3>` : ''}
@@ -122,6 +146,8 @@ function renderItem(n) {
         ${important ? '<span class="tag imp">重要</span>' : ''}
         ${watchTag}
         ${tags.map((t) => `<span class="tag">${t}</span>`).join('')}
+        ${isCls ? topicTags(n.tags) : ''}
+        ${isCls ? stockChips(n.symbols) : ''}
         ${sentimentBadge(n.id)}
         ${art ? `<a class="meta-link" href="${escapeHtml(art.uri)}" target="_blank" rel="noopener noreferrer">相关：${escapeHtml((art.title || '').slice(0, 28))}</a>` : ''}
         ${n.uri ? `<a class="meta-link" href="${escapeHtml(n.uri)}" target="_blank" rel="noopener noreferrer">原文 ↗</a>` : ''}
@@ -163,12 +189,13 @@ function updateFoot() {
 }
 
 function updateCount() {
-  const label = { all: '全部快讯', important: '重要快讯', related: '与我关注相关的快讯', analyzed: '我分析过的快讯' }[feed.filter]
+  const src = sourceById(state.source).name
+  const label = { all: `${src}`, important: `${src} · 重要`, related: `${src} · 与我关注相关`, analyzed: `${src} · 我分析过` }[feed.filter]
   const kw = sanitizeKeyword(feed.keyword)
   $('#feedCount').textContent =
     feed.total === null
       ? '加载中…'
-      : `${kw ? `「${kw}」搜索结果` : label} · 共 ${feed.total.toLocaleString()} 条 · 保留近 ${state.retentionDays} 天`
+      : `${kw ? `${src}「${kw}」搜索结果` : label} · 共 ${feed.total.toLocaleString()} 条 · 保留近 ${state.retentionDays} 天`
 }
 
 export async function loadFirst() {
@@ -212,7 +239,10 @@ export async function loadFirst() {
     } else {
       renderRows(rows, false)
     }
-    if (feed.filter === 'all' && !feed.keyword && rows[0]) feed.newestTime = rows[0].display_time
+    if (feed.filter === 'all' && !feed.keyword && rows[0]) {
+      feed.newestTime = rows[0].display_time
+      feed.seenTime[state.source] = rows[0].display_time
+    }
   } catch (err) {
     if (seq !== feed.seq) return
     $('#feedList').innerHTML = `<div class="empty">加载失败：${escapeHtml(cloudErrorText(err))} <button type="button" class="link-btn" id="retryFeed">重试</button></div>`
@@ -250,29 +280,100 @@ async function loadMore() {
   }
 }
 
-/** 轮询：是否有比当前列表更新的快讯 */
+/** 轮询：当前 tab 是否有比列表更新的快讯；其他 tab 显示未读角标 */
 export async function checkNew() {
-  if (!feed.newestTime || feed.filter !== 'all' || feed.keyword) return
-  const { count, error } = await cloud.database
-    .from('news_flash')
-    .select('id', { count: 'exact', head: true })
-    .gt('display_time', feed.newestTime)
-  if (error || !count) return
+  const tasks = state.sources.map(async (s) => {
+    const since = s.id === state.source ? feed.newestTime : feed.seenTime[s.id]
+    if (!since) return [s.id, 0]
+    const { count, error } = await cloud.database
+      .from('news_flash')
+      .select('id', { count: 'exact', head: true })
+      .eq('source', s.id)
+      .gt('display_time', since)
+    return [s.id, error ? 0 : count || 0]
+  })
+  const counts = Object.fromEntries(await Promise.all(tasks))
+  for (const s of state.sources) if (s.id !== state.source) setTabBadge(s.id, counts[s.id])
+  const n = feed.filter === 'all' && !feed.keyword ? counts[state.source] : 0
+  if (!n) return
   const b = $('#newBanner')
-  b.textContent = `有 ${count} 条新快讯，点击查看`
+  b.textContent = `有 ${n} 条新快讯，点击查看`
   b.hidden = false
-  document.title = `(${count}) 快讯分析台`
+  document.title = `(${n}) 快讯分析台`
+}
+
+function setTabBadge(sourceId, n) {
+  const el = $(`#sourceTabs [data-source="${sourceId}"] .tab-badge`)
+  if (!el) return
+  el.hidden = !n
+  el.textContent = n > 99 ? '99+' : String(n || '')
+}
+
+/** 其他 tab 的未读起点：首次进入时用该来源最新一条的时间 */
+async function initSeen() {
+  await Promise.all(
+    state.sources
+      .filter((s) => s.id !== state.source && !feed.seenTime[s.id])
+      .map(async (s) => {
+        const { data } = await cloud.database.from('news_flash').select('display_time').eq('source', s.id).order('display_time', { ascending: false }).limit(1)
+        if (data && data[0]) feed.seenTime[s.id] = data[0].display_time
+      }),
+  )
+}
+
+function renderTabs() {
+  $$('#sourceTabs [data-source]').forEach((t) => {
+    const on = t.dataset.source === state.source
+    t.classList.toggle('is-active', on)
+    t.setAttribute('aria-selected', on ? 'true' : 'false')
+  })
+}
+
+/** 切换来源 tab：记住选择，重新加载列表与统计 */
+export function setSource(id, { reload = true } = {}) {
+  if (!state.sources.some((s) => s.id === id)) return
+  if (id !== state.source) {
+    state.source = id
+    feed.newestTime = null
+    try {
+      localStorage.setItem(TAB_KEY, id)
+    } catch {
+      /* ignore */
+    }
+  }
+  setTabBadge(id, 0)
+  renderTabs()
+  document.title = '快讯分析台 · 7×24 快讯 + AI 深度解读'
+  feed.onSourceChange(id)
+  if (reload) {
+    loadFirst()
+    loadStats().catch(() => {})
+  }
+}
+
+/** 恢复上次看的 tab */
+export function restoreSource() {
+  let id = null
+  try {
+    id = localStorage.getItem(TAB_KEY)
+  } catch {
+    /* ignore */
+  }
+  setSource(state.sources.some((s) => s.id === id) ? id : state.sources[0].id, { reload: false })
+  initSeen().catch(() => {})
 }
 
 export async function loadStats() {
   const start = new Date()
   start.setHours(0, 0, 0, 0)
   const iso = start.toISOString()
+  const src = state.source
   const [today, imp, mine] = await Promise.all([
-    cloud.database.from('news_flash').select('id', { count: 'exact', head: true }).gte('display_time', iso),
-    cloud.database.from('news_flash').select('id', { count: 'exact', head: true }).gte('display_time', iso).gte('score', 3),
+    cloud.database.from('news_flash').select('id', { count: 'exact', head: true }).eq('source', src).gte('display_time', iso),
+    cloud.database.from('news_flash').select('id', { count: 'exact', head: true }).eq('source', src).gte('display_time', iso).gte('score', 3),
     cloud.database.from('news_analysis').select('id', { count: 'exact', head: true }),
   ])
+  if (src !== state.source) return // 统计还没回来就切了 tab
   $('#statToday').textContent = today.error ? '—' : today.count ?? 0
   $('#statImportant').textContent = imp.error ? '—' : imp.count ?? 0
   $('#statMine').textContent = mine.error ? '—' : mine.count ?? 0
@@ -307,17 +408,25 @@ export function setBusy(newsId, busy) {
   else btn.textContent = state.analyses.has(newsId) ? '查看分析' : '分析'
 }
 
-export function initFeed({ onAnalyze, onNeedWatch }) {
+export function initFeed({ onAnalyze, onNeedWatch, onSourceChange }) {
   feed.onAnalyze = onAnalyze
   if (onNeedWatch) feed.onNeedWatch = onNeedWatch
+  if (onSourceChange) feed.onSourceChange = onSourceChange
+  $('#sourceTabs').addEventListener('click', (e) => {
+    const t = e.target.closest('[data-source]')
+    if (t && t.dataset.source !== state.source) {
+      setSource(t.dataset.source)
+      window.scrollTo({ top: 0 })
+    }
+  })
   $('#loadMore').addEventListener('click', loadMore)
   $('#refreshFeed').addEventListener('click', () => {
-    document.title = '快讯分析台 · 7×24 重要快讯 + AI 深度解读'
+    document.title = '快讯分析台 · 7×24 快讯 + AI 深度解读'
     loadFirst()
     loadStats().catch(() => {})
   })
   $('#newBanner').addEventListener('click', () => {
-    document.title = '快讯分析台 · 7×24 重要快讯 + AI 深度解读'
+    document.title = '快讯分析台 · 7×24 快讯 + AI 深度解读'
     loadFirst()
     window.scrollTo({ top: 0, behavior: 'smooth' })
   })
@@ -394,6 +503,8 @@ export function resetFeed() {
   feed.filter = 'all'
   feed.keyword = ''
   feed.newestTime = null
+  feed.seenTime = {}
+  for (const s of state.sources) setTabBadge(s.id, 0)
   $('#searchInput').value = ''
   $$('#filterChips [data-filter]').forEach((c) => c.classList.toggle('is-active', c.dataset.filter === 'all'))
   $('#feedList').innerHTML = ''

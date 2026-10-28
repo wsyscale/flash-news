@@ -1,10 +1,10 @@
 // 入口：登录门禁 → 加载数据 → 定时刷新
 import { cloud, apiJson, clearTicket } from './cloud.js'
 import { syncOnce } from './sync.js'
-import { state, activeLlmConfig, providerById, searchSupport } from './state.js'
+import { state, activeLlmConfig, providerById, searchSupport, sourceById } from './state.js'
 import { $, $$, escapeHtml, fmtDateTime, relTime, toast, maskEmail, maskPhone, cloudErrorText } from './utils.js'
 import { initAuth, resetAuthView } from './auth.js'
-import { initFeed, loadFirst, loadStats, checkNew, resetFeed } from './feed.js'
+import { initFeed, loadFirst, loadStats, checkNew, resetFeed, restoreSource } from './feed.js'
 import { initAnalysis, openAnalysis, closeDrawer, resumePendingAnalysis, hasPendingAnalysis } from './analysis.js'
 import { initChat, resetChat } from './chat.js'
 import { sameWatchlist, getWatchlist } from './watch.js'
@@ -20,12 +20,20 @@ function show(view) {
 }
 
 // ---------- 抓取状态 ----------
+/** 状态里各来源的最近一次抓取；旧版服务端没有 sources 字段时退回 lastRun */
+function sourceRuns(st) {
+  if (Array.isArray(st.sources) && st.sources.length) return st.sources.filter((s) => s.enabled !== false)
+  return [{ id: 'wscn', shortName: '见闻', lastRun: st.lastRun }]
+}
+
 function renderStatus(st) {
   if (!st) return
   state.status = st
   const pill = $('#crawlPill')
   pill.classList.remove('is-running', 'is-error', 'is-off')
-  const last = st.lastRun
+  const runs = sourceRuns(st)
+  const failed = runs.filter((s) => s.lastRun && s.lastRun.status === 'error')
+  const lastAt = runs.map((s) => s.lastRun && (s.lastRun.finished_at || s.lastRun.started_at)).filter(Boolean).sort().pop()
   let text
   if (!st.enabled) {
     pill.classList.add('is-off')
@@ -33,17 +41,39 @@ function renderStatus(st) {
   } else if (st.running) {
     pill.classList.add('is-running')
     text = '正在抓取最新快讯…'
-  } else if (last && last.status === 'error') {
+  } else if (failed.length) {
     pill.classList.add('is-error')
-    text = `上次抓取失败 · ${relTime(last.finished_at || last.started_at)} · 稍后自动重试`
+    text = `${failed.map((s) => s.shortName || s.id).join('、')}上次抓取失败 · 稍后自动重试`
   } else {
-    const n = last ? last.new_items ?? last.inserted ?? 0 : 0
-    text = `每 ${st.intervalMinutes} 分钟自动抓取 · 上次 ${last ? relTime(last.finished_at || last.started_at) : '—'}${last ? ` · 新增 ${n} 条` : ''}`
+    const added = runs
+      .filter((s) => s.lastRun)
+      .map((s) => `${s.shortName || s.id} +${s.lastRun.new_items ?? s.lastRun.inserted ?? 0}`)
+      .join(' · ')
+    text = `每 ${st.intervalMinutes} 分钟自动抓取 · 上次 ${lastAt ? relTime(lastAt) : '—'}${added ? ` · ${added}` : ''}`
   }
+  pill.title = runs
+    .map((s) => `${s.name || s.id}：${s.lastRun ? `${s.lastRun.status === 'ok' ? '成功' : '失败'}，${fmtDateTime(s.lastRun.finished_at || s.lastRun.started_at)}${s.lastRun.message ? `（${s.lastRun.message}）` : ''}` : '尚未抓取'}`)
+    .join('\n')
   $('#crawlPillText').textContent = text
+  renderSideCrawl()
+}
+
+/** 侧栏「自动抓取」卡片：显示当前 tab 对应来源的抓取情况 */
+function renderSideCrawl() {
+  const st = state.status
+  if (!st) return
+  const cur = sourceRuns(st).find((s) => s.id === state.source)
+  const last = cur && cur.lastRun
   $('#kvInterval').textContent = `每 ${st.intervalMinutes} 分钟`
   $('#kvLast').textContent = last ? fmtDateTime(last.finished_at || last.started_at) : '—'
-  $('#kvInserted').textContent = last ? (last.status === 'ok' ? `${last.new_items ?? last.inserted ?? 0} 条` : '失败') : '—'
+  $('#kvInserted').textContent = last
+    ? last.status === 'ok'
+      ? `${last.new_items ?? last.inserted ?? 0} 条`
+      : '失败'
+    : cur
+      ? '尚未抓取'
+      : '—'
+  $('#kvInserted').title = last && last.status !== 'ok' ? last.message || '' : ''
   $('#kvNext').textContent = st.enabled && st.nextRunAt ? relTime(st.nextRunAt) : '已暂停'
 }
 
@@ -126,9 +156,14 @@ async function loadAnalysesIndex() {
 }
 
 // ---------- 数据保留期 ----------
+const SOURCE_NOTE = {
+  wscn: '华尔街见闻 7×24（编辑评级 2 级及以上，3 级标「重要」）',
+  cls: '财联社电报（全部普通电报，加红电报标「重要」，付费栏目不收录）',
+}
 function renderRetention() {
   const d = state.retentionDays
-  $('#retentionNote').textContent = `来源：华尔街见闻 7×24（重要级别），按快讯 ID 与内容双重去重；仅保留近 ${d} 天，过期自动清理。`
+  const note = SOURCE_NOTE[state.source] || sourceById(state.source).name
+  $('#retentionNote').textContent = `当前来源：${note}。按来源分别去重；仅保留近 ${d} 天，过期自动清理。`
 }
 
 async function loadRetention() {
@@ -149,6 +184,7 @@ async function loadProviders() {
   const r = await apiJson('/api/providers')
   state.providers = r.providers || []
   state.defaultPrompt = r.defaultSystemPrompt || ''
+  if (Array.isArray(r.sources) && r.sources.length) state.sources = r.sources
 }
 
 // ---------- 进入 / 离开 ----------
@@ -158,6 +194,7 @@ async function enterApp(session) {
   state.session = session
   show('app')
   renderIdentity()
+  restoreSource()
   const results = await Promise.allSettled([refreshMe(), loadProviders(), loadLlmSettings(), loadAnalysesIndex(), loadRetention()])
   renderLlmHint() // 服务商列表与模型配置并行加载，全部完成后再渲染一次
   const failed = results.find((r) => r.status === 'rejected')
@@ -223,6 +260,10 @@ async function boot() {
     onNeedWatch: () => {
       openSettings('llm')
       setTimeout(() => $('#watchInput').focus(), 50)
+    },
+    onSourceChange: () => {
+      renderRetention()
+      renderSideCrawl()
     },
   })
   initAnalysis({ openSettings })
