@@ -245,6 +245,7 @@ textarea { resize: vertical; line-height: 1.5; }
 .flash-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; font-size: 12px; }
 .tag { padding: 0 6px; border-radius: 4px; background: var(--line-2); color: var(--text-3); line-height: 20px; }
 .tag.imp { background: var(--up-weak); color: var(--up); font-weight: 600; }
+.tag.dup { background: #eef3fb; color: #3a68b8; font-weight: 600; }
 .meta-link { color: var(--text-3); }
 .meta-link:hover { color: var(--primary); }
 .sentiment { padding: 0 8px; border-radius: 4px; font-weight: 600; line-height: 20px; cursor: pointer; }

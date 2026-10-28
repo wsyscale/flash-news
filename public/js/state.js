@@ -13,8 +13,9 @@ export const state = {
   status: null,
   /** 数据库保留天数（crawler_settings.retention_days，1–14，默认 14） */
   retentionDays: 14,
-  /** 快讯来源（来自 /api/providers 的 sources）与当前 tab */
+  /** 快讯来源（来自 /api/providers 的 sources，最前面是虚拟的「全部」tab）与当前 tab */
   sources: [
+    { id: 'all', name: '全部', shortName: '全部' },
     { id: 'wscn', name: '华尔街见闻', shortName: '见闻', homepage: 'https://wallstreetcn.com/live/global' },
     { id: 'cls', name: '财联社电报', shortName: '财联社', homepage: 'https://www.cls.cn/telegraph' },
     { id: 'jin10', name: '金十数据', shortName: '金十', homepage: 'https://www.jin10.com' },
@@ -73,4 +74,25 @@ export function findModel(provider, model) {
 /** 来源信息；未知来源返回一个兜底对象 */
 export function sourceById(id) {
   return state.sources.find((s) => s.id === id) || { id, name: id || '未知来源', shortName: id || '未知' }
+}
+
+// 「全部」tab 的跨来源去重阈值：两条快讯存在至少 X 个连续相同的字判为重复
+//   存在本浏览器（localStorage），默认 5；0 = 不去重；范围 0–50
+const DEDUP_KEY = 'flash-news.dedupX'
+
+export function getDedupX() {
+  try {
+    const v = Number.parseInt(localStorage.getItem(DEDUP_KEY), 10)
+    return Number.isInteger(v) && v >= 0 && v <= 50 ? v : 5
+  } catch {
+    return 5
+  }
+}
+
+export function setDedupX(v) {
+  try {
+    localStorage.setItem(DEDUP_KEY, String(v))
+  } catch {
+    /* ignore */
+  }
 }

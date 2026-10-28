@@ -185,10 +185,12 @@ async function loadProviders() {
   state.providers = r.providers || []
   state.defaultPrompt = r.defaultSystemPrompt || ''
   if (Array.isArray(r.sources) && r.sources.length) {
+    // 最前面拼上虚拟的「全部」tab（整合所有来源并跨来源去重）
+    const merged = [{ id: 'all', name: '全部', shortName: '全部' }, ...r.sources]
     const ids = state.sources.map((s) => s.id).join(',')
-    state.sources = r.sources
+    state.sources = merged
     // 来源列表与页面上的 tab 不一致时重新渲染（服务端新增来源后页面自动跟上）
-    if (ids !== r.sources.map((s) => s.id).join(',')) renderTabs()
+    if (ids !== merged.map((s) => s.id).join(',')) renderTabs()
   }
 }
 

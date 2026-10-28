@@ -1,6 +1,7 @@
 // 设置弹窗：模型配置（云端私有保存）/ 抓取设置（管理员可改间隔）/ 账号
 import { cloud, apiJson, clearTicket } from './cloud.js'
-import { state, providerById, searchSupport, findModel, sourceById } from './state.js'
+import { state, providerById, searchSupport, findModel, sourceById, getDedupX, setDedupX } from './state.js'
+import { loadFirst } from './feed.js'
 import { $, $$, escapeHtml, fmtDateTime, relTime, toast, withBusy, cloudErrorText, maskEmail, maskPhone, debounce } from './utils.js'
 import { MAX_WATCH, QUICK_SECTORS, WATCH_TYPE_LABEL, watchKey, keywordsOf } from './watch.js'
 
@@ -635,6 +636,9 @@ function renderAccountPane() {
   $('#accountKv').innerHTML = rows.join('')
   $('#changePwdForm').hidden = !u.email
   inlineMsg('#pwdMsg', '')
+  const dx = $('#dedupX')
+  if (dx && document.activeElement !== dx) dx.value = String(getDedupX())
+  inlineMsg('#dedupMsg', '')
 }
 
 async function changePassword(e) {
@@ -672,6 +676,14 @@ export function initSettings(h) {
   hooks = { ...hooks, ...h }
   $$('[data-set-tab]').forEach((b) => b.addEventListener('click', () => switchSetTab(b.dataset.setTab)))
   $('#settingsClose').addEventListener('click', closeSettings)
+  // 「全部」tab 去重阈值：保存后如果正在看「全部」，立即按新阈值重新去重
+  $('#saveDedupX').addEventListener('click', () => {
+    const v = Number.parseInt($('#dedupX').value, 10)
+    if (!Number.isInteger(v) || v < 0 || v > 50) return inlineMsg('#dedupMsg', '请输入 0–50 的整数', 'err')
+    setDedupX(v)
+    inlineMsg('#dedupMsg', '已保存', 'ok')
+    if (state.source === 'all') loadFirst().catch(() => {})
+  })
   $('#settingsMask').addEventListener('click', (e) => {
     if (e.target === $('#settingsMask')) closeSettings()
   })

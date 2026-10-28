@@ -153,6 +153,7 @@
     <main class="layout">
       <section class="feed">
         <div class="source-tabs" id="sourceTabs" role="tablist" aria-label="快讯来源">
+          <button type="button" class="source-tab" role="tab" aria-selected="false" data-source="all">全部<span class="tab-badge" hidden></span></button>
           <button type="button" class="source-tab is-active" role="tab" aria-selected="true" data-source="wscn">华尔街见闻<span class="tab-badge" hidden></span></button>
           <button type="button" class="source-tab" role="tab" aria-selected="false" data-source="cls">财联社电报<span class="tab-badge" hidden></span></button>
           <button type="button" class="source-tab" role="tab" aria-selected="false" data-source="jin10">金十数据<span class="tab-badge" hidden></span></button>
@@ -338,6 +339,16 @@
         <!-- 账号 -->
         <div data-set-pane="account" hidden>
           <dl class="kv kv-wide" id="accountKv"></dl>
+          <div class="card-title mt">阅读偏好</div>
+          <label class="field">
+            <span class="field-label">「全部」tab 去重阈值 X</span>
+            <input id="dedupX" type="number" min="0" max="50" step="1" />
+            <span class="field-hint">两条快讯存在至少 X 个连续相同的字即判为重复（保留最早发布的一条）。默认 5，越大越严格，0 = 不去重。修改后需回到「全部」tab 刷新生效。</span>
+          </label>
+          <div class="modal-actions">
+            <span class="inline-msg" id="dedupMsg"></span>
+            <button type="button" class="btn btn-ghost" id="saveDedupX">保存</button>
+          </div>
           <form id="changePwdForm" class="sub-form" novalidate>
             <div class="card-title">修改密码 <em class="muted">（邮箱密码登录用户）</em></div>
             <label class="field"><span class="field-label">原密码</span><input id="oldPwd" type="password" autocomplete="current-password" /></label>
