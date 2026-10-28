@@ -4,7 +4,7 @@ import { syncOnce } from './sync.js'
 import { state, activeLlmConfig, providerById, searchSupport, sourceById } from './state.js'
 import { $, $$, escapeHtml, fmtDateTime, relTime, toast, maskEmail, maskPhone, cloudErrorText } from './utils.js'
 import { initAuth, resetAuthView } from './auth.js'
-import { initFeed, loadFirst, loadStats, checkNew, resetFeed, restoreSource } from './feed.js'
+import { initFeed, loadFirst, loadStats, checkNew, resetFeed, restoreSource, renderTabs } from './feed.js'
 import { initAnalysis, openAnalysis, closeDrawer, resumePendingAnalysis, hasPendingAnalysis } from './analysis.js'
 import { initChat, resetChat } from './chat.js'
 import { sameWatchlist, getWatchlist } from './watch.js'
@@ -184,7 +184,12 @@ async function loadProviders() {
   const r = await apiJson('/api/providers')
   state.providers = r.providers || []
   state.defaultPrompt = r.defaultSystemPrompt || ''
-  if (Array.isArray(r.sources) && r.sources.length) state.sources = r.sources
+  if (Array.isArray(r.sources) && r.sources.length) {
+    const ids = state.sources.map((s) => s.id).join(',')
+    state.sources = r.sources
+    // 来源列表与页面上的 tab 不一致时重新渲染（服务端新增来源后页面自动跟上）
+    if (ids !== r.sources.map((s) => s.id).join(',')) renderTabs()
+  }
 }
 
 // ---------- 进入 / 离开 ----------

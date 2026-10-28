@@ -321,7 +321,19 @@ async function initSeen() {
   )
 }
 
-function renderTabs() {
+export function renderTabs() {
+  // 来源列表以服务端 /api/providers 为准：tab 按钮动态生成（新增来源无需改页面）
+  const box = $('#sourceTabs')
+  const want = state.sources.map((s) => s.id).join(',')
+  const cur = $$('#sourceTabs [data-source]').map((t) => t.dataset.source).join(',')
+  if (want !== cur) {
+    box.innerHTML = state.sources
+      .map(
+        (s) =>
+          `<button type="button" class="source-tab" role="tab" aria-selected="false" data-source="${escapeHtml(s.id)}">${escapeHtml(s.name)}<span class="tab-badge" hidden></span></button>`,
+      )
+      .join('')
+  }
   $$('#sourceTabs [data-source]').forEach((t) => {
     const on = t.dataset.source === state.source
     t.classList.toggle('is-active', on)

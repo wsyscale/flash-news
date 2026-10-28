@@ -17,6 +17,7 @@ export const state = {
   sources: [
     { id: 'wscn', name: '华尔街见闻', shortName: '见闻', homepage: 'https://wallstreetcn.com/live/global' },
     { id: 'cls', name: '财联社电报', shortName: '财联社', homepage: 'https://www.cls.cn/telegraph' },
+    { id: 'jin10', name: '金十数据', shortName: '金十', homepage: 'https://www.jin10.com' },
   ],
   source: 'wscn',
 }
