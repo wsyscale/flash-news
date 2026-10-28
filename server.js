@@ -170,6 +170,55 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { ...signed, bid: batch.bid, count: batch.items.length, runs: batch.runs.length, digests: batch.digests.length, remaining, confirmed, status: scheduler.status() })
     }
 
+    // 摘要历史回填：登录用户的浏览器把数据库里已有的快讯分批回传（服务端读不了自己的云数据面），
+    // 服务端塞进 recent 缓冲后重新分组，摘要随正常同步链路写回 news_digest；done=true 标记完成（只做一次）
+    case 'POST /api/digest/backfill': {
+      const user = requireUser(req, res)
+      if (!user) return
+      if (!allow(user.uid, 'backfill', 20)) return sendJson(res, 429, { error: '回填过于频繁，请稍后再试' })
+      const body = await readBody(req, 12 * 1024 * 1024)
+      const items = Array.isArray(body.items) ? body.items.slice(0, 800) : []
+      let added = 0
+      for (const it of items) {
+        if (!it || typeof it !== 'object') continue
+        if (typeof it.source !== 'string' || !/^[a-z][a-z0-9_]{1,15}$/.test(it.source)) continue
+        if (!/^[0-9]{1,18}$/.test(String(it.source_id))) continue
+        // display_time 可能是数据库返回的 ISO 字符串，也可能是 epoch 秒；统一转 epoch 秒
+        const rawDt = it.display_time
+        let epochSec = NaN
+        if (typeof rawDt === 'number' && Number.isFinite(rawDt)) epochSec = Math.floor(rawDt)
+        else if (typeof rawDt === 'string' && /^[0-9]{9,10}(\.[0-9]+)?$/.test(rawDt.trim())) epochSec = Math.floor(Number(rawDt))
+        else if (typeof rawDt === 'string') {
+          const t = Date.parse(rawDt)
+          if (Number.isFinite(t)) epochSec = Math.floor(t / 1000)
+        }
+        if (!Number.isFinite(epochSec)) continue
+        store.addRecent({
+          source: it.source,
+          source_id: String(it.source_id),
+          title: String(it.title || '').slice(0, 500),
+          content_text: String(it.content_text || '').slice(0, 20000),
+          score: Number(it.score) || 0,
+          channels: Array.isArray(it.channels) ? it.channels.map(String).slice(0, 20) : [],
+          uri: String(it.uri || '').slice(0, 500),
+          images: Array.isArray(it.images) ? it.images.slice(0, 9) : [],
+          symbols: Array.isArray(it.symbols) ? it.symbols.slice(0, 20) : [],
+          tags: Array.isArray(it.tags) ? it.tags.slice(0, 10) : [],
+          display_time: String(epochSec),
+        })
+        added++
+      }
+      const done = body.done === true
+      // 回填数据进缓冲后立即重新分组（新组随下次同步下发）；done 时也分组（覆盖正好整除、末页空的情况）
+      if (added || done) {
+        try {
+          store.refreshDigests()
+        } catch { /* 下一轮抓取会再分组 */ }
+      }
+      if (done) store.markBackfillDone()
+      return sendJson(res, 200, { added, done, pendingDigests: store.pendingDigestCount() })
+    }
+
     case 'POST /api/crawl/run': {
       const user = requireUser(req, res, { admin: true })
       if (!user) return
