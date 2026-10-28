@@ -1,7 +1,6 @@
 // 设置弹窗：模型配置（云端私有保存）/ 抓取设置（管理员可改间隔）/ 账号
 import { cloud, apiJson, clearTicket } from './cloud.js'
-import { state, providerById, searchSupport, findModel, sourceById, getDedupX, setDedupX } from './state.js'
-import { loadFirst } from './feed.js'
+import { state, providerById, searchSupport, findModel, sourceById } from './state.js'
 import { $, $$, escapeHtml, fmtDateTime, relTime, toast, withBusy, cloudErrorText, maskEmail, maskPhone, debounce } from './utils.js'
 import { MAX_WATCH, QUICK_SECTORS, WATCH_TYPE_LABEL, watchKey, keywordsOf } from './watch.js'
 
@@ -477,6 +476,7 @@ function renderAdminBox(st, cs) {
         <label class="field"><span class="field-label">抓取间隔（分钟，1–1440）</span><input id="admInterval" type="number" min="1" max="1440" step="1" value="${st ? st.intervalMinutes : 20}" /></label>
         <label class="field"><span class="field-label">每次最多回补页数（1–20）</span><input id="admBackfill" type="number" min="1" max="20" step="1" value="${st ? st.backfillPages : 5}" /></label>
         <label class="field"><span class="field-label">数据保留天数（1–14）</span><input id="admRetention" type="number" min="1" max="14" step="1" value="${days}" /></label>
+        <label class="field"><span class="field-label">「全部」tab 去重阈值 X（1–50，越大越严格）</span><input id="admDigestX" type="number" min="1" max="50" step="1" value="${st && Number.isFinite(st.digestX) ? st.digestX : 5}" /></label>
       </div>
       <label class="switch-row"><input type="checkbox" id="admEnabled" ${!st || st.enabled ? 'checked' : ''} /><span class="switch"></span><span>启用定时抓取</span></label>
       ${st && st.settingsSource === 'env' ? '<p class="admin-note">当前服务端设置了环境变量 CRAWL_INTERVAL_MINUTES，间隔以环境变量为准；这里的修改会在移除该变量后生效。</p>' : ''}
@@ -557,10 +557,12 @@ async function saveCrawl() {
   const interval = Number.parseInt($('#admInterval').value, 10)
   const backfill = Number.parseInt($('#admBackfill').value, 10)
   const retention = Number.parseInt($('#admRetention').value, 10)
+  const digestX = Number.parseInt($('#admDigestX').value, 10)
   const enabled = $('#admEnabled').checked
   if (!Number.isInteger(interval) || interval < 1 || interval > 1440) return inlineMsg('#admMsg', '抓取间隔需为 1–1440 的整数', 'err')
   if (!Number.isInteger(backfill) || backfill < 1 || backfill > 20) return inlineMsg('#admMsg', '回补页数需为 1–20 的整数', 'err')
   if (!Number.isInteger(retention) || retention < 1 || retention > 14) return inlineMsg('#admMsg', '保留天数需为 1–14 的整数', 'err')
+  if (!Number.isInteger(digestX) || digestX < 1 || digestX > 50) return inlineMsg('#admMsg', '去重阈值需为 1–50 的整数', 'err')
   if (
     retention < state.retentionDays &&
     !confirm(`保留天数将从 ${state.retentionDays} 天缩短为 ${retention} 天，超过 ${retention} 天的快讯及所有用户对其的分析、追问记录会被立即删除，确定吗？`)
@@ -573,6 +575,7 @@ async function saveCrawl() {
       p_enabled: enabled,
       p_backfill_pages: backfill,
       p_retention_days: retention,
+      p_digest_x: digestX,
     })
     if (error) return inlineMsg('#admMsg', `保存失败：${cloudErrorText(error)}`, 'err')
     if (retention !== state.retentionDays) hooks.onRetention(retention)
@@ -636,9 +639,6 @@ function renderAccountPane() {
   $('#accountKv').innerHTML = rows.join('')
   $('#changePwdForm').hidden = !u.email
   inlineMsg('#pwdMsg', '')
-  const dx = $('#dedupX')
-  if (dx && document.activeElement !== dx) dx.value = String(getDedupX())
-  inlineMsg('#dedupMsg', '')
 }
 
 async function changePassword(e) {
@@ -676,14 +676,6 @@ export function initSettings(h) {
   hooks = { ...hooks, ...h }
   $$('[data-set-tab]').forEach((b) => b.addEventListener('click', () => switchSetTab(b.dataset.setTab)))
   $('#settingsClose').addEventListener('click', closeSettings)
-  // 「全部」tab 去重阈值：保存后如果正在看「全部」，立即按新阈值重新去重
-  $('#saveDedupX').addEventListener('click', () => {
-    const v = Number.parseInt($('#dedupX').value, 10)
-    if (!Number.isInteger(v) || v < 0 || v > 50) return inlineMsg('#dedupMsg', '请输入 0–50 的整数', 'err')
-    setDedupX(v)
-    inlineMsg('#dedupMsg', '已保存', 'ok')
-    if (state.source === 'all') loadFirst().catch(() => {})
-  })
   $('#settingsMask').addEventListener('click', (e) => {
     if (e.target === $('#settingsMask')) closeSettings()
   })

@@ -11,7 +11,7 @@
 | `.workbuddy/applications.yaml`、`.wbapp_*.genie` | 原账号的应用 ID | 不带。新账号开通云服务时自动生成 |
 | `config/app.json` | 原账号的云服务地址和 publishableKey | 不带。用开通云服务返回的配置重新生成 |
 | `config/secret.json` | 抓取密钥、签名密钥 | 不带。重新生成，再写进新数据库 |
-| 云数据库 | 8 张表、9 个函数、权限、RLS 策略、定时清理 | 用 `db/schema.sql` 重建（共 29 步） |
+| 云数据库 | 8 张表、9 个函数、权限、RLS 策略、定时清理 | 用 `db/schema.sql` 重建（共 36 步） |
 | 登录方式开关 | 手机号验证码、邮箱 | 在新应用的云服务面板里打开 |
 | 用户、分析、追问、模型配置 | 各站点用户自己的数据 | 不共享，用户在你的站点注册后自己填 API Key |
 | 快讯 | 抓取来的快讯 | 不用导入。站点启动后自动抓取，首次回补约 100 条 |
@@ -25,7 +25,7 @@
 
 ### 2. 把下面这段话发给 WorkBuddy
 
-> 请帮我部署 https://github.com/wsyscale/flash-news ：先把仓库克隆到当前工作目录，然后严格按仓库里 `DEPLOY.md` 第三部分「给 WorkBuddy 的执行步骤」完成部署：开通云服务、生成配置和密钥、按顺序执行 29 步建库、发布上线，最后运行上线检查。域名前缀用 `flash-news-<改成你想要的英文>`。不要修改业务代码。
+> 请帮我部署 https://github.com/wsyscale/flash-news ：先把仓库克隆到当前工作目录，然后严格按仓库里 `DEPLOY.md` 第三部分「给 WorkBuddy 的执行步骤」完成部署：开通云服务、生成配置和密钥、按顺序执行 36 步建库、发布上线，最后运行上线检查。域名前缀用 `flash-news-<改成你想要的英文>`。不要修改业务代码。
 
 不方便访问 GitHub 时，也可以下载仓库的 ZIP（或用 `node scripts/setup.mjs pack` 打出来的 `flash-news-portable.zip`），解压到工作目录，把上面那段话里的"克隆"改成"使用工作目录下的 `flash-news/`"。
 
@@ -45,7 +45,7 @@
 2. **写入云服务配置**：把返回结果里的 `publicConfig` 原样传进去：
    `node scripts/setup.mjs app-config '<publicConfig 的 JSON>'`
 3. **生成密钥**：`node scripts/setup.mjs secrets`
-4. **建库**：`node scripts/setup.mjs steps` 会列出 29 步。从第 1 步到第 29 步，**一次执行一步，前一步成功了再执行下一步**：
+4. **建库**：`node scripts/setup.mjs steps` 会列出 36 步。从第 1 步到第 36 步，**一次执行一步，前一步成功了再执行下一步**：
    - 运行 `node scripts/setup.mjs step <n>`，得到 `{ mode, sqlBase64, parameters? }`。
    - 调用 `mcp__genie-baas__workbuddy_cloudservice_db_exec_sql`，参数为 `applicationId`（取自 `.workbuddy/applications.yaml`）、`mode`、`sqlBase64`；如果有 `parameters`，一并带上（第 27 步会有）。
    - 脚本可以重复执行。某一步失败了，把问题修好后从这一步继续即可。不要并行执行，否则会报 42P01。
@@ -69,7 +69,7 @@
 ## 五、以后更新到新版本
 
 1. 在项目目录里 `git pull`。`config/`、`.workbuddy/` 里你自己的配置不在仓库中，不会被覆盖。
-2. 如果 `db/schema.sql` 有改动，把全部步骤（现在是 29 步）**按顺序重跑一遍**：脚本可以重复执行，已有的表和数据不受影响。
+2. 如果 `db/schema.sql` 有改动，把全部步骤（现在是 36 步）**按顺序重跑一遍**：脚本可以重复执行，已有的表和数据不受影响。
    - 例：2026-10-28 加入财联社电报时，快讯表从 `wscn_id` 改成了 `source + source_id`，旧库重跑一遍时由「升级旧库」那一步自动完成改名和约束替换，已有快讯、分析、追问都保留。
    - **先升级数据库，紧接着发布新代码，两步连着做**：升级后旧代码还在查 `wscn_id`，发布前新代码又依赖 `source` 字段，所以两步之间页面会短暂加载失败（通常 1–2 分钟），发布完成即恢复。
 3. 重新发布（同第三部分第 6 步），再跑一次 `verify`。

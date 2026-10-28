@@ -1,11 +1,13 @@
 // 快讯时间线：来源 tab、分页、搜索、筛选、新消息提示、今日统计
 import { cloud } from './cloud.js'
-import { state, SENTIMENT, sourceById, getDedupX } from './state.js'
+import { state, SENTIMENT, sourceById } from './state.js'
 import { $, $$, escapeHtml, fmtTime, dayKey, dayLabel, debounce, cloudErrorText, toast } from './utils.js'
 import { matchWatch, relatedOrFilter } from './watch.js'
 
 const PAGE = 30
 const COLS = 'id, source, source_id, title, content_text, content_more, score, channels, uri, article, images, symbols, tags, display_time'
+// 「全部」tab 读跨来源摘要表 news_digest（服务端已按 X 连字规则分组合并），映射回快讯结构
+const COLS_DIGEST = 'id, group_key, rep_news_id, rep_source, rep_source_id, title, content_text, score, channels, uri, images, symbols, tags, sources, refs, first_time, last_time'
 const TAB_KEY = 'flash-news.source'
 const CHANNELS = {
   'a-stock-channel': 'A股',
@@ -32,8 +34,6 @@ const feed = {
   newestTime: null, // 当前 tab 列表里最新一条的时间（「有 N 条新快讯」提示用）
   seenTime: {}, // 每个来源看过的最新时间（另一个 tab 上的未读角标用）
   seq: 0,
-  rows: [], // 「全部」tab 已加载的原始条目（跨页累积，去重在渲染前做）
-  visibleCount: 0, // 「全部」tab 去重后展示的条数
   onSourceChange: () => {},
   onAnalyze: () => {},
   onNeedWatch: () => {},
@@ -42,6 +42,28 @@ const feed = {
 /** 真实来源（不含虚拟的 all） */
 function realSources() {
   return state.sources.filter((s) => s.id !== 'all')
+}
+
+/** 摘要行 → 快讯结构（代表条目的字段 + 来源标注），分析 / 追问作用在代表条目上 */
+function mapDigestRow(r) {
+  const refs = Array.isArray(r.refs) ? r.refs : []
+  return {
+    id: r.rep_news_id,
+    source: r.rep_source,
+    source_id: r.rep_source_id,
+    title: r.title || '',
+    content_text: r.content_text || '',
+    content_more: '',
+    score: r.score,
+    channels: r.channels || [],
+    uri: r.uri || '',
+    article: null,
+    images: r.images || [],
+    symbols: r.symbols || [],
+    tags: r.tags || [],
+    display_time: r.first_time,
+    _dup: refs.length > 1 ? { count: refs.length, sources: r.sources || [] } : null,
+  }
 }
 
 function sanitizeKeyword(s) {
@@ -63,19 +85,19 @@ async function analyzedIds() {
 
 // 注意：查询构造器是 thenable，不能直接从 async 函数 return（会被自动执行），所以包一层对象
 async function buildQuery(withCount) {
+  const isAll = state.source === 'all'
   let q = cloud.database
-    .from('news_flash')
-    .select(COLS, withCount ? { count: 'exact' } : undefined)
-  // 「全部」tab 不按来源过滤，整合所有来源
-  if (state.source !== 'all') q = q.eq('source', state.source)
+    .from(isAll ? 'news_digest' : 'news_flash')
+    .select(isAll ? COLS_DIGEST : COLS, withCount ? { count: 'exact' } : undefined)
+  if (!isAll) q = q.eq('source', state.source)
   q = q
-    .order('display_time', { ascending: false })
+    .order(isAll ? 'first_time' : 'display_time', { ascending: false })
     .order('id', { ascending: false })
   if (feed.filter === 'important') q = q.gte('score', 3)
   if (feed.filter === 'related') q = q.or(relatedOrFilter())
   if (feed.filter === 'analyzed') {
     const ids = await analyzedIds()
-    q = q.in('id', ids.length ? ids : [-1])
+    q = q.in(isAll ? 'rep_news_id' : 'id', ids.length ? ids : [-1])
   }
   const kw = sanitizeKeyword(feed.keyword)
   if (kw) {
@@ -173,68 +195,6 @@ function renderItem(n) {
   </article>`
 }
 
-/**
- * 「全部」tab 跨来源去重：两条快讯的（标题+正文）里存在至少 X 个连续相同的字 → 判为同一条（并查集合并）。
- * 只统计含汉字的片段，避免纯数字 / 代码 / 英文报错号互相误判。
- * 每组保留最早发布的一条，并记 _dup = { count, sources } 供渲染「N 家来源报道」标签。
- */
-function dedupAll(rows, x) {
-  if (!Number.isInteger(x) || x < 2 || rows.length < 2) return rows
-  const n = rows.length
-  const parent = Array.from({ length: n }, (_, i) => i)
-  const find = (i) => {
-    while (parent[i] !== i) {
-      parent[i] = parent[parent[i]]
-      i = parent[i]
-    }
-    return i
-  }
-  const union = (a, b) => {
-    a = find(a)
-    b = find(b)
-    if (a !== b) parent[b] = a
-  }
-  const gramMap = new Map() // X 连字 → 第一次出现的行号
-  for (let i = 0; i < n; i++) {
-    const text = (String(rows[i].title || '') + String(rows[i].content_text || '')).replace(/\s+/g, '')
-    for (let j = 0; j + x <= text.length; j++) {
-      const g = text.slice(j, j + x)
-      if (!/[\u4e00-\u9fff]/.test(g)) continue
-      const first = gramMap.get(g)
-      if (first === undefined) gramMap.set(g, i)
-      else if (first !== i) union(first, i)
-    }
-  }
-  const groups = new Map()
-  for (let i = 0; i < n; i++) {
-    const r = find(i)
-    if (!groups.has(r)) groups.set(r, [])
-    groups.get(r).push(rows[i])
-  }
-  const out = []
-  for (const g of groups.values()) {
-    g.sort((a, b) => new Date(a.display_time) - new Date(b.display_time)) // 最早发布的排前
-    const rep = g[0]
-    rep._dup = g.length > 1 ? { count: g.length, sources: [...new Set(g.map((r) => r.source))] } : null
-    out.push(rep)
-  }
-  out.sort((a, b) => new Date(b.display_time) - new Date(a.display_time) || b.id - a.id)
-  return out
-}
-
-/** 单页 / 加载更多之后统一走这里：普通来源直接追加渲染，「全部」跨页累积后整体去重重渲染 */
-function applyRows(rows, append) {
-  if (state.source !== 'all') {
-    renderRows(rows, append)
-    feed.visibleCount = rows.length
-    return
-  }
-  feed.rows = append ? feed.rows.concat(rows) : rows.slice()
-  const visible = dedupAll(feed.rows, getDedupX())
-  feed.visibleCount = visible.length
-  renderRows(visible, false)
-}
-
 function renderRows(rows, append) {
   const list = $('#feedList')
   if (!append) {
@@ -267,15 +227,12 @@ function updateFoot() {
 function updateCount() {
   const src = sourceById(state.source).name
   const isAll = state.source === 'all'
-  const label = { all: isAll ? '全部来源（跨来源去重）' : src, important: `${src} · 重要`, related: `${src} · 与我关注相关`, analyzed: `${src} · 我分析过` }[feed.filter]
+  const label = { all: isAll ? '全部来源（跨来源已合并去重）' : src, important: `${src} · 重要`, related: `${src} · 与我关注相关`, analyzed: `${src} · 我分析过` }[feed.filter]
   const kw = sanitizeKeyword(feed.keyword)
-  if (feed.total === null) {
-    $('#feedCount').textContent = '加载中…'
-    return
-  }
-  const dedupInfo = isAll && !kw ? ` · 去重后 ${feed.visibleCount.toLocaleString()} 条` : ''
   $('#feedCount').textContent =
-    `${kw ? `${src}「${kw}」搜索结果` : label} · 共 ${feed.total.toLocaleString()} 条${dedupInfo} · 保留近 ${state.retentionDays} 天`
+    feed.total === null
+      ? '加载中…'
+      : `${kw ? `${src}「${kw}」搜索结果` : label} · 共 ${feed.total.toLocaleString()} 条 · 保留近 ${state.retentionDays} 天`
 }
 
 export async function loadFirst() {
@@ -284,8 +241,6 @@ export async function loadFirst() {
   feed.ended = false
   feed.total = null
   feed.loading = true
-  feed.rows = []
-  feed.visibleCount = 0
   $('#newBanner').hidden = true
   updateCount()
   updateFoot()
@@ -304,7 +259,7 @@ export async function loadFirst() {
     const { data, error, count } = await q.range(0, PAGE - 1)
     if (seq !== feed.seq) return
     if (error) throw error
-    const rows = data || []
+    const rows = (data || []).map(state.source === 'all' ? mapDigestRow : (r) => r)
     feed.total = typeof count === 'number' ? count : rows.length
     feed.offset = rows.length
     feed.ended = rows.length < PAGE
@@ -319,7 +274,7 @@ export async function loadFirst() {
               : '暂无快讯，稍后自动抓取后将显示在这里'
       }</div>`
     } else {
-      applyRows(rows, false)
+      renderRows(rows, false)
     }
     if (feed.filter === 'all' && !feed.keyword && rows[0]) {
       feed.newestTime = rows[0].display_time
@@ -348,10 +303,10 @@ async function loadMore() {
     const { data, error } = await q.range(feed.offset, feed.offset + PAGE - 1)
     if (seq !== feed.seq) return
     if (error) throw error
-    const rows = data || []
+    const rows = (data || []).map(state.source === 'all' ? mapDigestRow : (r) => r)
     feed.offset += rows.length
     feed.ended = rows.length < PAGE
-    applyRows(rows, true)
+    renderRows(rows, true)
   } catch (err) {
     toast(`加载失败：${cloudErrorText(err)}`, 'error')
   } finally {
@@ -378,11 +333,19 @@ export async function checkNew() {
   const counts = Object.fromEntries(await Promise.all(tasks))
   for (const s of real) if (s.id !== state.source) setTabBadge(s.id, counts[s.id])
   if (feed.filter !== 'all' || feed.keyword) return
-  // 「全部」tab 的新快讯数 = 各来源之和；来源 tab = 自己的
-  const n =
-    state.source === 'all'
-      ? real.reduce((t, s) => t + (counts[s.id] || 0), 0)
-      : counts[state.source] || 0
+  // 「全部」tab 查摘要表；来源 tab 查自己的
+  let n = 0
+  if (state.source === 'all') {
+    if (feed.newestTime) {
+      const { count, error } = await cloud.database
+        .from('news_digest')
+        .select('id', { count: 'exact', head: true })
+        .gt('first_time', feed.newestTime)
+      n = error ? 0 : count || 0
+    }
+  } else {
+    n = counts[state.source] || 0
+  }
   if (!n) return
   const b = $('#newBanner')
   b.textContent = `有 ${n} 条新快讯，点击查看`
@@ -606,8 +569,6 @@ export function resetFeed() {
   feed.keyword = ''
   feed.newestTime = null
   feed.seenTime = {}
-  feed.rows = []
-  feed.visibleCount = 0
   for (const s of realSources()) setTabBadge(s.id, 0)
   $('#searchInput').value = ''
   $$('#filterChips [data-filter]').forEach((c) => c.classList.toggle('is-active', c.dataset.filter === 'all'))

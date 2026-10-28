@@ -657,3 +657,301 @@ INSERT INTO public.crawler_secret (id, secret_hash, signing_key) VALUES (1, $1, 
 
 -- @step write 定时任务：每小时第 7 分钟清理过期快讯
 SELECT cron.schedule('purge_expired_news', '7 * * * *', 'SELECT public.purge_expired_news()');
+
+-- ======================================================================
+-- 七、跨来源摘要（「全部」tab）：服务端按 X 连字规则分组后写入 news_digest，
+--     每行 = 一组去重后的快讯，标注被哪些来源报道；清理与 news_flash 同步。
+--     以下步骤对旧库（2026-10-28 之前只有 29 步的版本）重跑一遍即可升级。
+-- ======================================================================
+
+-- @step migrate 建表 news_digest（跨来源摘要：一行 = 一组去重后的快讯）
+CREATE TABLE IF NOT EXISTS public.news_digest (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  group_key TEXT NOT NULL UNIQUE,          -- 组键：最早成员的 source:source_id
+  rep_source TEXT NOT NULL,                -- 代表条目（组内最早发布）的来源
+  rep_source_id BIGINT NOT NULL,
+  rep_news_id BIGINT,                      -- 代表条目在 news_flash 的 id（无外键：代表被清理时由 purge 重指向）
+  title TEXT NOT NULL DEFAULT '',
+  content_text TEXT NOT NULL DEFAULT '',
+  score INT NOT NULL DEFAULT 2,            -- 组内最高分（>=3 视为重要）
+  channels TEXT[] NOT NULL DEFAULT '{}',
+  uri TEXT,
+  images JSONB NOT NULL DEFAULT '[]'::jsonb,
+  symbols JSONB NOT NULL DEFAULT '[]'::jsonb,
+  tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  sources TEXT[] NOT NULL DEFAULT '{}',    -- 被哪些来源报道过
+  refs JSONB NOT NULL DEFAULT '[]'::jsonb, -- [{source, source_id, display_time, uri}]（按发布时间升序）
+  first_time TIMESTAMPTZ NOT NULL,         -- 组内最早发布时间
+  last_time TIMESTAMPTZ NOT NULL,          -- 组内最新发布时间（过期清理以此为准）
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- @step migrate 摘要表索引 + RLS + 权限（与 news_flash 一致：登录用户可读保留期内数据）
+DO $$
+BEGIN
+  CREATE INDEX IF NOT EXISTS news_digest_first_time_idx ON public.news_digest (first_time DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS news_digest_last_time_idx ON public.news_digest (last_time);
+  ALTER TABLE public.news_digest ENABLE ROW LEVEL SECURITY;
+  GRANT SELECT ON TABLE public.news_digest TO authenticated, anon;
+  DROP POLICY IF EXISTS news_digest_read_auth ON public.news_digest;
+  CREATE POLICY news_digest_read_auth ON public.news_digest FOR SELECT TO anon, authenticated
+    USING (coalesce(auth.uid(), 'anon') <> 'anon' AND last_time >= (SELECT public.retention_cutoff()));
+  COMMENT ON TABLE public.news_digest IS '跨来源摘要（「全部」tab）：服务端按 X 连字规则分组的去重快讯，一行一组，最早发布的当代表；清理与 news_flash 同步（组内最新一条也过期才删）';
+END
+$$;
+
+-- @step migrate 抓取设置加去重阈值 digest_x（默认 5）
+ALTER TABLE public.crawler_settings ADD COLUMN IF NOT EXISTS digest_x INT NOT NULL DEFAULT 5 CHECK (digest_x BETWEEN 1 AND 50);
+
+-- @step migrate 重建 purge_expired_news()：清理 news_flash 后同步清理 news_digest（组内最新一条也过期才删；代表被清理时重指向组内存活成员）
+CREATE OR REPLACE FUNCTION public.purge_expired_news()
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_deleted int := 0;
+BEGIN
+  -- 快讯删除时，news_analysis / news_chat 通过外键 ON DELETE CASCADE 一并删除
+  DELETE FROM news_flash WHERE display_time < retention_cutoff();
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  -- 摘要：组内最新一条也早于保留期才删（组内还有新报道就保留）
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'news_digest') THEN
+    DELETE FROM news_digest WHERE last_time < retention_cutoff();
+    -- 代表条目已被清理的组：重指向组内仍存活的最早成员（refs 按发布时间升序）
+    UPDATE news_digest d
+    SET rep_news_id = m.news_id, rep_source = m.source, rep_source_id = m.sid, updated_at = now()
+    FROM (
+      SELECT DISTINCT ON (d2.id) d2.id AS did, nf.id AS news_id, nf.source AS source, nf.source_id AS sid
+      FROM news_digest d2
+      CROSS JOIN LATERAL jsonb_array_elements(d2.refs) AS x(ref)
+      JOIN news_flash nf ON nf.source = x.ref->>'source' AND nf.source_id = (x.ref->>'source_id')::bigint
+      WHERE d2.rep_news_id IS NULL OR NOT EXISTS (SELECT 1 FROM news_flash n2 WHERE n2.id = d2.rep_news_id)
+      ORDER BY d2.id, (x.ref->>'display_time')::double precision, nf.id
+    ) m
+    WHERE d.id = m.did;
+  END IF;
+  UPDATE crawler_settings SET last_purge_at = now(), last_purge_deleted = v_deleted WHERE id = 1;
+  RETURN v_deleted;
+END;
+$$;
+
+-- @step migrate 重建 admin_update_crawler_settings()：新增 p_digest_x 参数（1–50）。先删旧签名，避免 PostgREST 重载歧义
+DROP FUNCTION IF EXISTS public.admin_update_crawler_settings(int, boolean, int, int);
+CREATE OR REPLACE FUNCTION public.admin_update_crawler_settings(p_interval_minutes int, p_enabled boolean DEFAULT NULL, p_backfill_pages int DEFAULT NULL, p_retention_days int DEFAULT NULL, p_digest_x int DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid text := auth.uid();
+  v_row jsonb;
+  v_old_retention int;
+BEGIN
+  IF v_uid IS NULL OR v_uid = 'anon' OR NOT EXISTS (SELECT 1 FROM app_admins WHERE user_id = v_uid) THEN
+    RAISE EXCEPTION 'admin only' USING ERRCODE = '42501';
+  END IF;
+  IF p_interval_minutes IS NULL OR p_interval_minutes < 1 OR p_interval_minutes > 1440 THEN
+    RAISE EXCEPTION 'interval_minutes must be between 1 and 1440' USING ERRCODE = '22023';
+  END IF;
+  IF p_backfill_pages IS NOT NULL AND (p_backfill_pages < 1 OR p_backfill_pages > 20) THEN
+    RAISE EXCEPTION 'backfill_pages must be between 1 and 20' USING ERRCODE = '22023';
+  END IF;
+  IF p_retention_days IS NOT NULL AND (p_retention_days < 1 OR p_retention_days > 14) THEN
+    RAISE EXCEPTION 'retention_days must be between 1 and 14' USING ERRCODE = '22023';
+  END IF;
+  IF p_digest_x IS NOT NULL AND (p_digest_x < 1 OR p_digest_x > 50) THEN
+    RAISE EXCEPTION 'digest_x must be between 1 and 50' USING ERRCODE = '22023';
+  END IF;
+  SELECT retention_days INTO v_old_retention FROM crawler_settings WHERE id = 1;
+  INSERT INTO crawler_settings (id, interval_minutes, enabled, backfill_pages, retention_days, digest_x, updated_at, updated_by)
+  VALUES (1, p_interval_minutes, coalesce(p_enabled, true), coalesce(p_backfill_pages, 5), coalesce(p_retention_days, 14), coalesce(p_digest_x, 5), now(), v_uid)
+  ON CONFLICT (id) DO UPDATE SET
+    interval_minutes = EXCLUDED.interval_minutes,
+    enabled = coalesce(p_enabled, crawler_settings.enabled),
+    backfill_pages = coalesce(p_backfill_pages, crawler_settings.backfill_pages),
+    retention_days = coalesce(p_retention_days, crawler_settings.retention_days),
+    digest_x = coalesce(p_digest_x, crawler_settings.digest_x),
+    updated_at = now(),
+    updated_by = v_uid;
+  -- 缩短保留期后立即清理一次
+  IF p_retention_days IS NOT NULL AND p_retention_days < coalesce(v_old_retention, 14) THEN
+    PERFORM purge_expired_news();
+  END IF;
+  SELECT to_jsonb(s) INTO v_row FROM crawler_settings s WHERE id = 1;
+  RETURN v_row;
+END;
+$$;
+
+-- @step migrate 重建 issue_ticket()：抓取设置带 digest_x（去重阈值）
+CREATE OR REPLACE FUNCTION public.issue_ticket()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid text := auth.uid();
+  v_key text;
+  v_payload text;
+BEGIN
+  IF v_uid IS NULL OR v_uid = 'anon' THEN
+    RAISE EXCEPTION 'login required' USING ERRCODE = '42501';
+  END IF;
+  SELECT signing_key INTO v_key FROM crawler_secret WHERE id = 1;
+  IF v_key IS NULL THEN
+    RAISE EXCEPTION 'signing key not configured';
+  END IF;
+  SELECT jsonb_build_object(
+    'typ', 'ticket',
+    'uid', v_uid,
+    'adm', EXISTS (SELECT 1 FROM app_admins WHERE user_id = v_uid),
+    'iat', extract(epoch FROM now())::bigint,
+    'exp', extract(epoch FROM now())::bigint + 900,
+    -- 每个来源在数据库里的最新发布时间（秒）；{} 表示数据库还没有快讯
+    'latest', coalesce((SELECT jsonb_object_agg(source, extract(epoch FROM mx)::bigint) FROM (SELECT source, max(display_time) AS mx FROM news_flash GROUP BY source) t), '{}'::jsonb),
+    'lr', (SELECT extract(epoch FROM max(started_at))::bigint FROM crawl_runs),
+    'cs', (SELECT jsonb_build_object('interval', interval_minutes, 'enabled', enabled, 'backfill', backfill_pages, 'retention', retention_days, 'digestX', digest_x, 'ts', extract(epoch FROM updated_at)::bigint) FROM crawler_settings WHERE id = 1)
+  )::text INTO v_payload;
+  RETURN jsonb_build_object('payload', v_payload, 'sig', encode(hmac(v_payload, v_key, 'sha256'), 'hex'));
+END;
+$$;
+
+-- @step migrate 重建 ingest_signed()：批次可带 digests（跨来源摘要行），upsert 进 news_digest；先删旧签名避免重载歧义
+DROP FUNCTION IF EXISTS public.ingest_signed(text, text);
+CREATE OR REPLACE FUNCTION public.ingest_signed(p_payload text, p_sig text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid text := auth.uid();
+  v_key text;
+  v jsonb;
+  v_received int := 0;
+  v_inserted int := 0;
+  v_runs int := 0;
+  v_digests int := 0;
+  v_receipt text;
+BEGIN
+  IF v_uid IS NULL OR v_uid = 'anon' THEN
+    RAISE EXCEPTION 'login required' USING ERRCODE = '42501';
+  END IF;
+  SELECT signing_key INTO v_key FROM crawler_secret WHERE id = 1;
+  IF v_key IS NULL OR p_payload IS NULL OR p_sig IS NULL OR length(p_payload) > 4000000
+     OR encode(hmac(p_payload, v_key, 'sha256'), 'hex') <> lower(p_sig) THEN
+    RAISE EXCEPTION 'invalid signature' USING ERRCODE = '42501';
+  END IF;
+  v := p_payload::jsonb;
+  IF coalesce(v->>'typ', '') <> 'batch' THEN
+    RAISE EXCEPTION 'invalid payload type' USING ERRCODE = '22023';
+  END IF;
+  IF coalesce((v->>'iat')::bigint, 0) < extract(epoch FROM now())::bigint - 3600 THEN
+    RAISE EXCEPTION 'batch expired' USING ERRCODE = '22023';
+  END IF;
+  IF jsonb_typeof(v->'items') = 'array' THEN
+    v_received := jsonb_array_length(v->'items');
+    v_inserted := ingest_items_internal(v->'items');
+  END IF;
+  IF jsonb_typeof(v->'runs') = 'array' AND jsonb_array_length(v->'runs') > 0 THEN
+    WITH ins AS (
+      INSERT INTO crawl_runs (run_key, source, started_at, finished_at, status, trigger, pages, fetched, inserted, duration_ms, message)
+      SELECT left(r->>'run_key', 80),
+             CASE WHEN coalesce(r->>'source', '') ~ '^[a-z][a-z0-9_]{1,15}$' THEN r->>'source' ELSE 'wscn' END,
+             (r->>'started_at')::timestamptz,
+             coalesce((r->>'finished_at')::timestamptz, (r->>'started_at')::timestamptz),
+             left(coalesce(r->>'status', 'ok'), 20),
+             left(coalesce(r->>'trigger', 'schedule'), 20),
+             coalesce((r->>'pages')::int, 0),
+             coalesce((r->>'fetched')::int, 0),
+             coalesce((r->>'new_items')::int, 0),
+             coalesce((r->>'duration_ms')::int, 0),
+             left(r->>'message', 1000)
+      FROM jsonb_array_elements(v->'runs') AS r
+      WHERE r->>'run_key' IS NOT NULL AND r->>'started_at' IS NOT NULL
+      ON CONFLICT (run_key) DO NOTHING
+      RETURNING 1
+    )
+    SELECT count(*) INTO v_runs FROM ins;
+    DELETE FROM crawl_runs WHERE id <= (SELECT id FROM crawl_runs ORDER BY id DESC OFFSET 1000 LIMIT 1);
+  END IF;
+  -- 跨来源摘要：先入库快讯再写摘要（摘要里的代表通过 (source, source_id) 反查 news_flash 的 id）
+  IF jsonb_typeof(v->'digests') = 'array' AND jsonb_array_length(v->'digests') > 0 THEN
+    WITH src AS (
+      SELECT d
+      FROM jsonb_array_elements(v->'digests') AS d
+      WHERE d->>'group_key' ~ '^[a-z][a-z0-9_]{1,15}:[0-9]{1,18}$'
+        AND d->>'rep_source' ~ '^[a-z][a-z0-9_]{1,15}$'
+        AND (d->>'rep_source_id') ~ '^[0-9]{1,18}$'
+        AND jsonb_typeof(d->'refs') = 'array' AND jsonb_array_length(d->'refs') BETWEEN 1 AND 50
+        AND (d->>'first_time') ~ '^[0-9]+(\.[0-9]+)?$' AND (d->>'last_time') ~ '^[0-9]+(\.[0-9]+)?$'
+    ), ins AS (
+      INSERT INTO news_digest (group_key, rep_source, rep_source_id, rep_news_id, title, content_text, score, channels, uri, images, symbols, tags, sources, refs, first_time, last_time, updated_at)
+      SELECT d->>'group_key',
+             d->>'rep_source',
+             (d->>'rep_source_id')::bigint,
+             (SELECT nf.id FROM news_flash nf WHERE nf.source = d->>'rep_source' AND nf.source_id = (d->>'rep_source_id')::bigint),
+             left(coalesce(d->>'title', ''), 500),
+             left(coalesce(d->>'content_text', ''), 20000),
+             CASE WHEN (d->>'score') ~ '^[0-9]{1,3}$' THEN (d->>'score')::int ELSE 2 END,
+             CASE WHEN jsonb_typeof(d->'channels') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(d->'channels')) ELSE '{}'::text[] END,
+             left(d->>'uri', 500),
+             CASE WHEN jsonb_typeof(d->'images') = 'array' THEN d->'images' ELSE '[]'::jsonb END,
+             CASE WHEN jsonb_typeof(d->'symbols') = 'array' THEN d->'symbols' ELSE '[]'::jsonb END,
+             CASE WHEN jsonb_typeof(d->'tags') = 'array' THEN d->'tags' ELSE '[]'::jsonb END,
+             CASE WHEN jsonb_typeof(d->'sources') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(d->'sources')) ELSE '{}'::text[] END,
+             d->'refs',
+             to_timestamp((d->>'first_time')::double precision),
+             to_timestamp((d->>'last_time')::double precision),
+             now()
+      FROM src
+      ON CONFLICT (group_key) DO UPDATE SET
+        rep_news_id = COALESCE(
+          (SELECT nf.id FROM news_flash nf WHERE nf.source = EXCLUDED.rep_source AND nf.source_id = EXCLUDED.rep_source_id),
+          news_digest.rep_news_id),
+        rep_source = EXCLUDED.rep_source,
+        rep_source_id = EXCLUDED.rep_source_id,
+        title = EXCLUDED.title,
+        content_text = EXCLUDED.content_text,
+        score = GREATEST(news_digest.score, EXCLUDED.score),
+        channels = EXCLUDED.channels,
+        uri = EXCLUDED.uri,
+        images = EXCLUDED.images,
+        symbols = EXCLUDED.symbols,
+        tags = EXCLUDED.tags,
+        sources = EXCLUDED.sources,
+        refs = EXCLUDED.refs,
+        last_time = GREATEST(news_digest.last_time, EXCLUDED.last_time),
+        updated_at = now()
+      RETURNING 1
+    )
+    SELECT count(*) INTO v_digests FROM ins;
+  END IF;
+  -- 收据：证明这一批（bid）已经由数据库处理完毕（新增、重复或过期都算），服务端验签后不再重发
+  IF coalesce(v->>'bid', '') ~ '^[A-Za-z0-9_-]{8,64}$' THEN
+    v_receipt := jsonb_build_object('typ', 'receipt', 'bid', v->>'bid', 'iat', extract(epoch FROM now())::bigint)::text;
+  END IF;
+  RETURN jsonb_build_object(
+    'received', v_received,
+    'inserted', v_inserted,
+    'runs', v_runs,
+    'digests', v_digests,
+    'receipt', CASE WHEN v_receipt IS NULL THEN NULL ELSE jsonb_build_object('payload', v_receipt, 'sig', encode(hmac(v_receipt, v_key, 'sha256'), 'hex')) END
+  );
+END;
+$$;
+
+-- @step migrate 新旧函数执行权限收口（admin_update_crawler_settings 换了签名、ingest_signed 重建后需要重新授权）
+DO $$
+BEGIN
+  REVOKE EXECUTE ON FUNCTION public.admin_update_crawler_settings(int, boolean, int, int, int) FROM PUBLIC, anon, authenticated;
+  GRANT EXECUTE ON FUNCTION public.admin_update_crawler_settings(int, boolean, int, int, int) TO authenticated;
+  REVOKE EXECUTE ON FUNCTION public.ingest_signed(text, text) FROM PUBLIC, anon, authenticated;
+  GRANT EXECUTE ON FUNCTION public.ingest_signed(text, text) TO authenticated;
+  REVOKE EXECUTE ON FUNCTION public.purge_expired_news() FROM PUBLIC, anon, authenticated;
+END
+$$;

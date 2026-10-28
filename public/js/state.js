@@ -75,24 +75,3 @@ export function findModel(provider, model) {
 export function sourceById(id) {
   return state.sources.find((s) => s.id === id) || { id, name: id || '未知来源', shortName: id || '未知' }
 }
-
-// 「全部」tab 的跨来源去重阈值：两条快讯存在至少 X 个连续相同的字判为重复
-//   存在本浏览器（localStorage），默认 5；0 = 不去重；范围 0–50
-const DEDUP_KEY = 'flash-news.dedupX'
-
-export function getDedupX() {
-  try {
-    const v = Number.parseInt(localStorage.getItem(DEDUP_KEY), 10)
-    return Number.isInteger(v) && v >= 0 && v <= 50 ? v : 5
-  } catch {
-    return 5
-  }
-}
-
-export function setDedupX(v) {
-  try {
-    localStorage.setItem(DEDUP_KEY, String(v))
-  } catch {
-    /* ignore */
-  }
-}

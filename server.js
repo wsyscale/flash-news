@@ -162,12 +162,12 @@ async function handleApi(req, res, url) {
         const bid = verifyReceipt(config.signingKey, rc)
         if (bid) confirmed += store.confirm(bid)
       }
-      if (body.peek) return sendJson(res, 200, { count: 0, runs: 0, remaining: store.pendingCount(), confirmed, status: scheduler.status() })
+      if (body.peek) return sendJson(res, 200, { count: 0, runs: 0, digests: 0, remaining: store.pendingCount(), confirmed, status: scheduler.status() })
       const batch = store.takeBatch(BATCH_ITEMS, BATCH_RUNS)
-      if (!batch) return sendJson(res, 200, { count: 0, runs: 0, remaining: 0, confirmed, status: scheduler.status() })
+      if (!batch) return sendJson(res, 200, { count: 0, runs: 0, digests: 0, remaining: 0, confirmed, status: scheduler.status() })
       const remaining = Math.max(0, store.pendingCount() - batch.items.length)
       const signed = signBatch(config.signingKey, batch)
-      return sendJson(res, 200, { ...signed, bid: batch.bid, count: batch.items.length, runs: batch.runs.length, remaining, confirmed, status: scheduler.status() })
+      return sendJson(res, 200, { ...signed, bid: batch.bid, count: batch.items.length, runs: batch.runs.length, digests: batch.digests.length, remaining, confirmed, status: scheduler.status() })
     }
 
     case 'POST /api/crawl/run': {
