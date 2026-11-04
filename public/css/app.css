@@ -357,6 +357,29 @@ sup.cite a:hover { background: var(--primary); color: #fff; }
 .analysis-meta .pill.web { background: #e8f7ff; color: #0e7cc4; }
 .analysis-meta .pill.warn { background: var(--warn-weak); color: #b25d00; cursor: help; }
 
+/* ===== 长截图（勾选模式） ===== */
+.snap-bar { display: flex; align-items: center; gap: 8px; flex: 1; }
+.snap-bar .snap-count { font-size: 13px; color: var(--text-2); margin-right: auto; }
+.drawer.snapping .drawer-body .snap-unit { position: relative; outline: 2px dashed transparent; outline-offset: 4px; border-radius: 8px; transition: outline-color 0.1s; }
+.drawer.snapping .drawer-body .snap-unit:hover { outline-color: var(--line); }
+.drawer.snapping .drawer-body .snap-unit.snap-on { outline: 2px solid var(--primary); }
+.snap-check {
+  position: absolute; right: 4px; top: 4px; z-index: 6; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px; background: #fff; border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.snap-check input { width: 15px; height: 15px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+/* 离屏渲染舞台：复用全局样式，白底、与抽屉同字体 */
+.snap-stage {
+  position: fixed; left: -10000px; top: 0; background: #fff; padding: 18px 20px 14px;
+  font-family: var(--font); color: var(--text); font-size: 14px; line-height: 1.6;
+}
+.snap-stage .drawer-news { margin-bottom: 14px; }
+.snap-stage .md { max-width: none; }
+.snap-foot { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-3); text-align: center; }
+.snap-stage .snap-sum { font-weight: 500; padding: 8px 12px; color: var(--text-2); font-size: 13px; }
+
 /* Markdown */
 .md { font-size: 14.5px; line-height: 1.75; color: var(--text); word-break: break-word; }
 .md h1, .md h2, .md h3 { line-height: 1.4; margin: 1.3em 0 0.5em; }

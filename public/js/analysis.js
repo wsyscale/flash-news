@@ -6,6 +6,7 @@ import { markAnalyzed, setBusy } from './feed.js'
 import { renderMarkdown, renderSources, sourcesText, readSse, responseError } from './markdown.js'
 import { attachChat, detachChat, chatCount, clearChat, isChatBusy } from './chat.js'
 import { getWatchlist, sameWatchlist } from './watch.js'
+import { initSnapshot, exitSnapshot } from './snapshot.js'
 
 let current = null // { news, ac, content, reasoning, meta, streaming }
 const runs = new Map() // news_id -> 正在生成的 run（关闭抽屉也继续，完成后自动保存）
@@ -77,9 +78,15 @@ function renderNews(n) {
     ${n.uri ? `<a href="${escapeHtml(n.uri)}" target="_blank" rel="noopener noreferrer" style="font-size:12px">查看原文 ↗</a>` : ''}`
 }
 
-function setFooter({ streaming, hasContent }) {
+let lastFooter = { streaming: false, hasContent: false }
+function setFooter(opts) {
+  lastFooter = { ...opts }
+  const { streaming, hasContent } = opts
+  const chatReady = !$('#chatSection').hidden && !!$('#chatList').children.length
+  const busy = current ? isChatBusy(current.news.id) : false
   $('#stopBtn').hidden = !streaming
   $('#copyBtn').hidden = streaming || !hasContent
+  $('#snapBtn').hidden = streaming || busy || !(hasContent || chatReady)
   $('#reanalyzeBtn').hidden = streaming
   $('#reanalyzeBtn').textContent = hasContent ? '重新分析' : '开始分析'
 }
@@ -93,6 +100,7 @@ function openDrawer() {
 }
 
 export function closeDrawer() {
+  exitSnapshot()
   const d = $('#drawer')
   d.classList.remove('is-open')
   d.setAttribute('aria-hidden', 'true')
@@ -392,8 +400,11 @@ export function resumePendingAnalysis() {
 
 export function initAnalysis({ openSettings }) {
   openSettingsCb = openSettings
+  initSnapshot()
   $('#drawerClose').addEventListener('click', closeDrawer)
   $('#drawerMask').addEventListener('click', closeDrawer)
+  // 退出截图勾选模式后恢复底部按钮
+  document.addEventListener('snapshot:exit', () => setFooter(lastFooter))
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && $('#drawer').classList.contains('is-open') && $('#settingsMask').hidden) closeDrawer()
   })

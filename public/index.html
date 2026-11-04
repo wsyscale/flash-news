@@ -247,7 +247,14 @@
     <footer class="drawer-foot">
       <button type="button" class="btn btn-ghost btn-sm" id="stopBtn" hidden>停止生成</button>
       <button type="button" class="btn btn-ghost btn-sm" id="copyBtn" hidden>复制结果</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="snapBtn" hidden>截图</button>
       <button type="button" class="btn btn-primary btn-sm" id="reanalyzeBtn" hidden>重新分析</button>
+      <div class="snap-bar" id="snapBar" hidden>
+        <span class="snap-count" id="snapCount">已选 0 项</span>
+        <button type="button" class="btn btn-ghost btn-sm" id="snapAll">全不选</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="snapCancel">取消</button>
+        <button type="button" class="btn btn-primary btn-sm" id="snapGo" disabled>复制长截图</button>
+      </div>
     </footer>
   </aside>
 
@@ -363,6 +370,7 @@
   <script>window.WorkBuddyCloud || document.write('<script src="/vendor/workbuddy-cloud-sdk.global.js"><\/script>')</script>
   <script src="/vendor/marked.umd.js"></script>
   <script src="/vendor/purify.min.js"></script>
+  <script src="/vendor/html2canvas-pro.min.js"></script>
   <script src="/app-config.js"></script>
   <script type="module" src="/js/main.js"></script>
   <script>
