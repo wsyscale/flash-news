@@ -746,9 +746,9 @@ export function initSettings(h) {
   $('#llmSearch').addEventListener('change', (e) => draft && (draft.web_search = e.target.checked))
   $('#llmGlobal').addEventListener('change', (e) => draft && (draft.global_context = e.target.checked))
   $('#llmGlobalScope').addEventListener('change', (e) => {
-    if (!draft) return
-    draft.global_context_scope = { ...draft.global_context_scope, mode: e.target.value === 'day' ? 'day' : '24h' }
-    renderGlobalScope()
+    const day = e.target.value === 'day'
+    $('#llmGlobalCount').hidden = day // 可见性联动不依赖草稿状态
+    if (draft) draft.global_context_scope = { ...draft.global_context_scope, mode: day ? 'day' : '24h' }
   })
   $('#llmGlobalCount').addEventListener('input', (e) => {
     if (!draft) return

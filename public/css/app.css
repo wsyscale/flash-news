@@ -116,6 +116,10 @@ textarea { resize: vertical; line-height: 1.5; }
 .switch-row input:checked + .switch { background: var(--primary); }
 .switch-row input:checked + .switch::after { transform: translateX(16px); }
 .switch-row.is-disabled { opacity: 0.5; cursor: not-allowed; }
+/* 全局上下文：范围下拉 + 条数输入 */
+.global-ctx-row { display: flex; gap: 8px; align-items: center; }
+.global-ctx-row select { flex: 1; min-width: 0; width: auto; }
+.global-ctx-row input[type='number'] { flex: none; width: 96px; text-align: center; }
 .model-input { margin-top: 8px; font-family: var(--mono); font-size: 13px; }
 #llmModelSelect optgroup { font-weight: 600; color: var(--text-2); }
 #llmModelSelect option { font-weight: normal; color: var(--text); }
