@@ -958,3 +958,6 @@ $$;
 
 -- @step migrate 模型配置新增 global_context（全局上下文开关：分析时附上近期「华尔街见闻」重要快讯作佐证）
 ALTER TABLE public.user_llm_settings ADD COLUMN IF NOT EXISTS global_context BOOLEAN NOT NULL DEFAULT false;
+
+-- @step migrate 模型配置 global_context 扩展范围：global_context_scope = 'day'（当天全部重要快讯）或 '24h:N'（近24h前N条，默认 24h:15）
+ALTER TABLE public.user_llm_settings ADD COLUMN IF NOT EXISTS global_context_scope TEXT NOT NULL DEFAULT '24h:15';

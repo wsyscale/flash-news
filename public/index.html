@@ -310,8 +310,18 @@
           <label class="switch-row" id="globalCtxRow">
             <input type="checkbox" id="llmGlobal" />
             <span class="switch"></span>
-            <span>全局上下文（分析时附上近 24 小时「华尔街见闻」的重要快讯作为市场佐证）</span>
+            <span>全局上下文（分析时附上「华尔街见闻」的重要快讯作为市场佐证）</span>
           </label>
+          <div class="field" id="globalCtxCfg">
+            <div class="input-row">
+              <select id="llmGlobalScope">
+                <option value="24h">近 24 小时 · 前若干条</option>
+                <option value="day">当天 · 全部重要快讯</option>
+              </select>
+              <input id="llmGlobalCount" type="number" min="1" max="50" step="1" value="15" />
+            </div>
+            <span class="field-hint">「近 24 小时」按时间倒序取前 N 条（1–50）；「当天」取今天 0 点以来的全部重要快讯（最多 100 条）。均会排除当前正在分析的这条。</span>
+          </div>
           <div class="field watch-field">
             <span class="field-label">关注的板块 / 标的 <em class="muted" id="watchCount">（0/20）</em></span>
             <div class="watch-box" id="watchBox">

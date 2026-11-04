@@ -48,6 +48,7 @@ export function activeLlmConfig() {
     thinking: !!row.thinking,
     webSearch: row.web_search !== false,
     globalContext: row.global_context === true,
+    globalContextScope: row.global_context_scope || '24h:15',
     systemPrompt: row.system_prompt || '',
   }
 }

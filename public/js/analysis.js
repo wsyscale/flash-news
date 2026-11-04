@@ -196,10 +196,25 @@ async function saveAnalysis(newsId, payload) {
   return row
 }
 
-/** 全局上下文：近 24h「华尔街见闻」的重要快讯（score>=3，最多 15 条，排除本条）；查询失败静默降级 */
-async function fetchGlobalContext(excludeId) {
+/** 解析全局上下文范围：'day'（当天全部，上限 100）| '24h:N'（近24h前N条，N≤50） */
+function parseScope(v) {
+  if (String(v) === 'day') return { mode: 'day', count: 100 }
+  const m = /^24h:(\d+)$/.exec(String(v || ''))
+  return { mode: '24h', count: m ? Math.min(50, Math.max(1, Number(m[1]))) : 15 }
+}
+
+/** 全局上下文：华尔街见闻的重要快讯（score>=3，排除本条）；查询失败静默降级 */
+async function fetchGlobalContext(excludeId, scopeRaw) {
   try {
-    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+    const sc = parseScope(scopeRaw)
+    let since
+    if (sc.mode === 'day') {
+      const d = new Date()
+      d.setHours(0, 0, 0, 0) // 当天 0 点（浏览器本地时区 = 北京时间）
+      since = d.toISOString()
+    } else {
+      since = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+    }
     const { data, error } = await cloud.database
       .from('news_flash')
       .select('id, title, content_text, display_time')
@@ -207,11 +222,11 @@ async function fetchGlobalContext(excludeId) {
       .gte('score', 3)
       .gt('display_time', since)
       .order('display_time', { ascending: false })
-      .limit(16)
+      .limit(sc.count + 5)
     if (error) throw error
     return (data || [])
       .filter((r) => r.id !== excludeId)
-      .slice(0, 15)
+      .slice(0, sc.count)
       .map((r) => ({
         time: fmtDateTime(r.display_time),
         text: [r.title, r.content_text].filter(Boolean).join('：').slice(0, 240),
@@ -244,7 +259,7 @@ async function startAnalysis(news) {
   current.reasoning = ''
   current.sources = []
   current.streaming = true
-  const globalNews = cfg.globalContext ? await fetchGlobalContext(news.id) : null
+  const globalNews = cfg.globalContext ? await fetchGlobalContext(news.id, cfg.globalContextScope) : null
   const watchlist = getWatchlist().map(({ name, code, market, type }) => ({ name, code: code || '', market: market || '', type: type || 'custom' }))
   current.meta = { provider: cfg.provider, model, thinking: cfg.thinking, watchlist, streaming: true, time: '生成中…', globalCtx: globalNews ? globalNews.length : 0 }
   const myRun = current

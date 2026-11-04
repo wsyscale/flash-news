@@ -9,6 +9,30 @@ let hooks = { onLlmSaved: () => {}, onStatus: () => {}, onLogout: () => {}, refr
 
 const TRIGGER = { schedule: '定时', startup: '启动', manual: '手动', gap: '补缺口', cli: '命令行' }
 
+/** global_context_scope 存储值 'day' | '24h:N' → { mode: 'day'|'24h', count } */
+export function parseGlobalScope(v) {
+  const s = String(v || '')
+  if (s === 'day') return { mode: 'day', count: 100 }
+  const m = /^24h:(\d+)$/.exec(s)
+  const n = m ? Math.min(50, Math.max(1, Number(m[1]))) : 15
+  return { mode: '24h', count: n }
+}
+
+/** { mode, count } → 存储值 */
+export function formatGlobalScope({ mode, count }) {
+  if (mode === 'day') return 'day'
+  const n = Math.min(50, Math.max(1, Number(count) || 15))
+  return `24h:${n}`
+}
+
+function renderGlobalScope() {
+  if (!draft) return
+  const sc = draft.global_context_scope
+  $('#llmGlobalScope').value = sc.mode
+  $('#llmGlobalCount').value = sc.count
+  $('#llmGlobalCount').hidden = sc.mode === 'day'
+}
+
 function inlineMsg(id, text, type = '') {
   const el = $(id)
   el.textContent = text || ''
@@ -24,6 +48,7 @@ function makeDraft() {
     thinking: row.thinking ?? true,
     web_search: row.web_search ?? true,
     global_context: row.global_context ?? false,
+    global_context_scope: parseGlobalScope(row.global_context_scope),
     system_prompt: row.system_prompt || '',
     watchlist: JSON.parse(JSON.stringify(Array.isArray(row.watchlist) ? row.watchlist : [])),
   }
@@ -184,6 +209,14 @@ function collectFields() {
   if (!$('#llmThinking').disabled) draft.thinking = $('#llmThinking').checked
   if (!$('#llmSearch').disabled) draft.web_search = $('#llmSearch').checked
   draft.global_context = $('#llmGlobal').checked
+  draft.global_context_scope = {
+    mode: $('#llmGlobalScope').value === 'day' ? 'day' : '24h',
+    count: Number($('#llmGlobalCount').value) || 15,
+  }
+  if (draft.global_context_scope.mode === '24h') {
+    const n = Math.min(50, Math.max(1, Number($('#llmGlobalCount').value) || 15))
+    $('#llmGlobalCount').value = n
+  }
   draft.system_prompt = $('#llmPrompt').value.trim()
 }
 
@@ -358,6 +391,7 @@ function renderProviderFields() {
   updateThinkingRow()
   updateSearchRow()
   $('#llmGlobal').checked = !!draft.global_context
+  renderGlobalScope()
 }
 
 function renderLlmPane() {
@@ -391,6 +425,7 @@ async function saveLlm() {
     thinking: draft.thinking,
     web_search: draft.web_search,
     global_context: !!draft.global_context,
+    global_context_scope: formatGlobalScope(draft.global_context_scope),
     system_prompt: draft.system_prompt || null,
     watchlist: draft.watchlist,
     updated_at: new Date().toISOString(),
@@ -710,6 +745,15 @@ export function initSettings(h) {
   $('#llmThinking').addEventListener('change', (e) => draft && (draft.thinking = e.target.checked))
   $('#llmSearch').addEventListener('change', (e) => draft && (draft.web_search = e.target.checked))
   $('#llmGlobal').addEventListener('change', (e) => draft && (draft.global_context = e.target.checked))
+  $('#llmGlobalScope').addEventListener('change', (e) => {
+    if (!draft) return
+    draft.global_context_scope = { ...draft.global_context_scope, mode: e.target.value === 'day' ? 'day' : '24h' }
+    renderGlobalScope()
+  })
+  $('#llmGlobalCount').addEventListener('input', (e) => {
+    if (!draft) return
+    draft.global_context_scope = { ...draft.global_context_scope, count: Number(e.target.value) || 15 }
+  })
   $('#toggleKey').addEventListener('click', () => {
     const k = $('#llmKey')
     k.type = k.type === 'password' ? 'text' : 'password'
