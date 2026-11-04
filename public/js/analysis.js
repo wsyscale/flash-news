@@ -53,7 +53,9 @@ function renderMeta(meta) {
     `<span class="pill">${escapeHtml(meta.model)}</span>`,
     meta.thinking ? '<span class="pill">深度思考</span>' : '',
     searchPill(meta),
-    meta.globalCtx ? `<span class="pill" title="分析时附带近 24 小时华尔街见闻重要快讯作为市场佐证">全局上下文 ${meta.globalCtx} 条</span>` : '',
+    meta.globalCtx
+      ? `<span class="pill" title="分析时附带华尔街见闻重要快讯作为市场佐证${meta.globalSummarized ? '（已由概括 AI 按主题压缩）' : ''}">全局上下文 ${meta.globalCtx} 条${meta.globalSummarized ? ' · 已概括' : ''}</span>`
+      : '',
     meta.watchlist && meta.watchlist.length
       ? `<span class="pill" title="${escapeHtml(meta.watchlist.map((w) => w.name).join('、'))}">结合关注 ${meta.watchlist.length} 项</span>`
       : '',
@@ -306,11 +308,15 @@ async function startAnalysis(news) {
       if (event === 'meta') {
         myRun.meta.thinking = j.thinking
         myRun.meta.webSearch = !!j.webSearch
+        if (j.globalSummarized) myRun.meta.globalSummarized = true
         if (j.searchError) {
           myRun.meta.searchError = j.searchError
           toast(j.searchError, 'error')
         }
         if (myRun === current) renderMeta(myRun.meta)
+      } else if (event === 'progress') {
+        // 全局上下文概括等前置阶段的进度提示
+        if (myRun === current && !myRun.content) setState(j.message || '')
       } else if (event === 'sources') {
         myRun.sources = Array.isArray(j.items) ? j.items : []
         if (myRun === current) scheduleRender()
