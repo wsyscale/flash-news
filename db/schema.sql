@@ -955,3 +955,6 @@ BEGIN
   REVOKE EXECUTE ON FUNCTION public.purge_expired_news() FROM PUBLIC, anon, authenticated;
 END
 $$;
+
+-- @step migrate 模型配置新增 global_context（全局上下文开关：分析时附上近期「华尔街见闻」重要快讯作佐证）
+ALTER TABLE public.user_llm_settings ADD COLUMN IF NOT EXISTS global_context BOOLEAN NOT NULL DEFAULT false;

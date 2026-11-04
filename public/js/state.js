@@ -47,6 +47,7 @@ export function activeLlmConfig() {
     baseUrl: cfg.baseUrl || '',
     thinking: !!row.thinking,
     webSearch: row.web_search !== false,
+    globalContext: row.global_context === true,
     systemPrompt: row.system_prompt || '',
   }
 }

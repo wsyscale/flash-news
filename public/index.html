@@ -307,6 +307,11 @@
             <span>联网搜索（分析与追问时由模型按需搜索最新信息，回答附引用来源）</span>
           </label>
           <span class="field-hint search-hint" id="searchHint"></span>
+          <label class="switch-row" id="globalCtxRow">
+            <input type="checkbox" id="llmGlobal" />
+            <span class="switch"></span>
+            <span>全局上下文（分析时附上近 24 小时「华尔街见闻」的重要快讯作为市场佐证）</span>
+          </label>
           <div class="field watch-field">
             <span class="field-label">关注的板块 / 标的 <em class="muted" id="watchCount">（0/20）</em></span>
             <div class="watch-box" id="watchBox">

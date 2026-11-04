@@ -23,6 +23,7 @@ function makeDraft() {
     configs: JSON.parse(JSON.stringify(row.configs || {})),
     thinking: row.thinking ?? true,
     web_search: row.web_search ?? true,
+    global_context: row.global_context ?? false,
     system_prompt: row.system_prompt || '',
     watchlist: JSON.parse(JSON.stringify(Array.isArray(row.watchlist) ? row.watchlist : [])),
   }
@@ -182,6 +183,7 @@ function collectFields() {
   else cfg.baseUrl = $('#llmBaseSelect').value
   if (!$('#llmThinking').disabled) draft.thinking = $('#llmThinking').checked
   if (!$('#llmSearch').disabled) draft.web_search = $('#llmSearch').checked
+  draft.global_context = $('#llmGlobal').checked
   draft.system_prompt = $('#llmPrompt').value.trim()
 }
 
@@ -355,6 +357,7 @@ function renderProviderFields() {
   renderModelSelect(p, cfg.model || p.defaultModel || '')
   updateThinkingRow()
   updateSearchRow()
+  $('#llmGlobal').checked = !!draft.global_context
 }
 
 function renderLlmPane() {
@@ -387,6 +390,7 @@ async function saveLlm() {
     configs: draft.configs,
     thinking: draft.thinking,
     web_search: draft.web_search,
+    global_context: !!draft.global_context,
     system_prompt: draft.system_prompt || null,
     watchlist: draft.watchlist,
     updated_at: new Date().toISOString(),
@@ -705,6 +709,7 @@ export function initSettings(h) {
   $('#llmBaseSelect').addEventListener('change', onModelChanged)
   $('#llmThinking').addEventListener('change', (e) => draft && (draft.thinking = e.target.checked))
   $('#llmSearch').addEventListener('change', (e) => draft && (draft.web_search = e.target.checked))
+  $('#llmGlobal').addEventListener('change', (e) => draft && (draft.global_context = e.target.checked))
   $('#toggleKey').addEventListener('click', () => {
     const k = $('#llmKey')
     k.type = k.type === 'password' ? 'text' : 'password'

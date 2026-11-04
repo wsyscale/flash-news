@@ -53,6 +53,7 @@ function renderMeta(meta) {
     `<span class="pill">${escapeHtml(meta.model)}</span>`,
     meta.thinking ? '<span class="pill">深度思考</span>' : '',
     searchPill(meta),
+    meta.globalCtx ? `<span class="pill" title="分析时附带近 24 小时华尔街见闻重要快讯作为市场佐证">全局上下文 ${meta.globalCtx} 条</span>` : '',
     meta.watchlist && meta.watchlist.length
       ? `<span class="pill" title="${escapeHtml(meta.watchlist.map((w) => w.name).join('、'))}">结合关注 ${meta.watchlist.length} 项</span>`
       : '',
@@ -195,6 +196,31 @@ async function saveAnalysis(newsId, payload) {
   return row
 }
 
+/** 全局上下文：近 24h「华尔街见闻」的重要快讯（score>=3，最多 15 条，排除本条）；查询失败静默降级 */
+async function fetchGlobalContext(excludeId) {
+  try {
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+    const { data, error } = await cloud.database
+      .from('news_flash')
+      .select('id, title, content_text, display_time')
+      .eq('source', 'wscn')
+      .gte('score', 3)
+      .gt('display_time', since)
+      .order('display_time', { ascending: false })
+      .limit(16)
+    if (error) throw error
+    return (data || [])
+      .filter((r) => r.id !== excludeId)
+      .slice(0, 15)
+      .map((r) => ({
+        time: fmtDateTime(r.display_time),
+        text: [r.title, r.content_text].filter(Boolean).join('：').slice(0, 240),
+      }))
+  } catch {
+    return null
+  }
+}
+
 async function startAnalysis(news) {
   const cfg = activeLlmConfig()
   if (!cfg || !cfg.apiKey) {
@@ -218,8 +244,9 @@ async function startAnalysis(news) {
   current.reasoning = ''
   current.sources = []
   current.streaming = true
+  const globalNews = cfg.globalContext ? await fetchGlobalContext(news.id) : null
   const watchlist = getWatchlist().map(({ name, code, market, type }) => ({ name, code: code || '', market: market || '', type: type || 'custom' }))
-  current.meta = { provider: cfg.provider, model, thinking: cfg.thinking, watchlist, streaming: true, time: '生成中…' }
+  current.meta = { provider: cfg.provider, model, thinking: cfg.thinking, watchlist, streaming: true, time: '生成中…', globalCtx: globalNews ? globalNews.length : 0 }
   const myRun = current
   runs.set(news.id, myRun)
   detachChat()
@@ -244,6 +271,7 @@ async function startAnalysis(news) {
         systemPrompt: cfg.systemPrompt,
         webSearch: cfg.webSearch,
         watchlist,
+        global_news: globalNews || undefined,
         news: {
           id: news.id,
           source: news.source,
